@@ -1,0 +1,2 @@
+# Pair every notebook in this dir: .py (percent, committed) <-> .ipynb (gitignored).
+formats = "ipynb,py:percent"

@@ -1,0 +1,72 @@
+# boba_joints task runner.  `just` (or `just --list`) shows all recipes.
+set dotenv-load := true
+
+default:
+    @just --list
+
+# --- database -------------------------------------------------------------
+
+# Start the PostGIS container and wait until it is healthy (postgis ready)
+db-up:
+    docker compose up -d --wait
+    @echo "postgres ready on localhost:5433"
+
+# Stop the container, keep the data volume
+db-down:
+    docker compose down
+
+# Stop the container AND delete all data
+db-nuke:
+    docker compose down -v
+
+# psql shell inside the container
+db-shell:
+    docker compose exec db psql -U boba -d boba
+
+# --- migrations ---------------------------------------------------------
+
+# Apply all migrations
+migrate:
+    uv run alembic upgrade head
+
+# Autogenerate a migration from model changes:  just revision "add foo"
+revision message:
+    uv run alembic revision --autogenerate -m "{{message}}"
+
+# Show migration head(s) and what the DB is currently at
+migrate-status:
+    uv run alembic heads
+    uv run alembic current
+
+# Roll back one migration
+migrate-down:
+    uv run alembic downgrade -1
+
+# Fail if models have drifted from migrations
+migrate-check:
+    uv run alembic check
+
+# Run post-pipeline data invariants (boba/checks.py)
+check:
+    uv run python -m boba.checks
+
+# --- pipeline ---------------------------------------------------------
+
+# Overture: download NYC `place` extract, load boba candidates
+ingest-overture:
+    uv run python -m boba.ingest.overture
+
+# DOHMH: download NYC restaurant inspections, load boba candidates + history
+ingest-dohmh:
+    uv run python -m boba.ingest.dohmh
+
+# Link Overture places <-> DOHMH establishments
+match:
+    uv run python -m boba.match
+
+# Compute boba_shops + status_events + summary output
+analyze:
+    uv run python -m boba.analyze
+
+# Whole pipeline from a cold start
+all: db-up migrate ingest-overture ingest-dohmh match analyze check

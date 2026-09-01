@@ -1,0 +1,23 @@
+services:
+  db:
+    image: imresamu/postgis:16-3.5
+    container_name: boba_pg
+    environment:
+      POSTGRES_USER: boba
+      POSTGRES_PASSWORD: boba
+      POSTGRES_DB: boba
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init/99_trim.sql:/docker-entrypoint-initdb.d/99_trim.sql:ro
+    healthcheck:
+      # not just pg_isready -- also wait for db/init to have created the postgis extension
+      test: ["CMD-SHELL", "psql -U boba -d boba -tAc \"select 1 from pg_extension where extname='postgis'\" | grep -q 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  pgdata:
