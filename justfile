@@ -66,6 +66,10 @@ fmt:
 test:
     uv run pytest -q
 
+# Launch the Streamlit dashboard
+dashboard:
+    uv run --group dashboard streamlit run dashboard/app.py
+
 # --- pipeline ---------------------------------------------------------
 
 # Overture: download NYC `place` extract, load boba candidates

@@ -25,6 +25,10 @@ build-backend = "hatchling.build"
 packages = ["boba"]
 
 [dependency-groups]
+dashboard = [
+    "pydeck>=0.9.3",
+    "streamlit>=1.63.0",
+]
 dev = [
     "pytest>=8.3",
     "ruff>=0.9",
