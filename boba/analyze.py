@@ -67,7 +67,10 @@ _OVERTURE = """
     ) m on true
 """
 
-_BOROUGH = {
+# DOHMH `boro` fallback (used only when a point sits just outside the polygons,
+# e.g. a shoreline geocode); Overture localities are neighbourhood-level and are
+# NOT trusted -- borough comes from point-in-polygon against `boroughs`.
+_DOHMH_BORO = {
     "1": "Manhattan",
     "2": "Bronx",
     "3": "Brooklyn",
@@ -81,11 +84,49 @@ _BOROUGH = {
 }
 
 
-def _borough(boro, locality) -> str | None:
-    for v in (boro, locality):
-        if isinstance(v, str) and v.strip():
-            return _BOROUGH.get(v.strip().lower(), v.strip())
-    return None
+def _assign_boroughs(shops: list[dict]) -> list[dict]:
+    """Set `borough` by point-in-polygon; drop shops that fall outside all five
+    boroughs (the NYC bbox rectangle also covers Nassau / Westchester edges)."""
+    pts = [
+        (i, s["lon"], s["lat"])
+        for i, s in enumerate(shops)
+        if s["lon"] is not None and s["lat"] is not None
+    ]
+    in_boro: dict[int, str] = {}
+    if pts:
+        idx, lons, lats = (list(x) for x in zip(*pts, strict=True))
+        with engine.connect() as conn:
+            if conn.execute(text("select count(*) from boroughs")).scalar_one() == 0:
+                raise RuntimeError("boroughs table is empty -- run `just seed` first")
+            rows = conn.execute(
+                text(
+                    """
+                    select t.i, b.name
+                    from unnest(cast(:i as int[]), cast(:lon as float8[]),
+                                cast(:lat as float8[])) as t(i, lon, lat)
+                    left join boroughs b
+                      on st_contains(b.geom, st_setsrid(st_makepoint(t.lon, t.lat), 4326))
+                    """
+                ),
+                {"i": idx, "lon": lons, "lat": lats},
+            )
+            in_boro = {int(i): name for i, name in rows if name}
+
+    kept, dropped = [], 0
+    for i, sh in enumerate(shops):
+        boro = in_boro.get(i)
+        if not boro:
+            dboro = sh.get("_dohmh_boro")
+            if sh["camis"] and isinstance(dboro, str) and dboro.strip():
+                boro = _DOHMH_BORO.get(dboro.strip().lower(), dboro.strip().title())
+            else:
+                dropped += 1
+                continue
+        sh["borough"] = boro
+        kept.append(sh)
+    if dropped:
+        log.info("dropped %d shops outside the five boroughs", dropped)
+    return kept
 
 
 def _release_date(rel: str | None) -> dt.date | None:
@@ -174,7 +215,8 @@ def run(since_year: int = SINCE_YEAR) -> None:
                 "camis": ov.camis if isinstance(ov.camis, str) else None,
                 "lon": lon,
                 "lat": lat,
-                "borough": _borough(est.boro if est is not None else None, ov.locality),
+                "borough": None,
+                "_dohmh_boro": est.boro if est is not None else None,
                 "opened_date": opened_d,
                 "opened_source": opened_src,
                 "opened_precision": prec,
@@ -197,7 +239,8 @@ def run(since_year: int = SINCE_YEAR) -> None:
                 "camis": camis,
                 "lon": est.lon,
                 "lat": est.lat,
-                "borough": _borough(est.boro, None),
+                "borough": None,
+                "_dohmh_boro": est.boro,
                 "opened_date": opened_d,
                 "opened_source": opened_src,
                 "opened_precision": prec,
@@ -207,6 +250,8 @@ def run(since_year: int = SINCE_YEAR) -> None:
                 "identified_by": _identified_by(None, est),
             }
         )
+
+    shops = _assign_boroughs(shops)
 
     merged = sum(1 for s in shops if s["overture_id"] and s["camis"])
     ov_only = sum(1 for s in shops if s["overture_id"] and not s["camis"])

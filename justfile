@@ -29,6 +29,10 @@ db-shell:
 migrate:
     uv run alembic upgrade head
 
+# Load the NYC borough polygons (one-time; needed by analyze)
+seed:
+    uv run python -m boba.seed
+
 # Autogenerate a migration from model changes:  just revision "add foo"
 revision message:
     uv run alembic revision --autogenerate -m "{{message}}"
@@ -94,4 +98,4 @@ analyze:
     uv run python -m boba.analyze
 
 # Whole pipeline from a cold start
-all: db-up migrate ingest-overture ingest-dohmh match analyze check
+all: db-up migrate seed ingest-overture ingest-dohmh match analyze check

@@ -116,14 +116,18 @@ k4.metric("With a known opening date", int(f["opened_date"].notna().sum()))
 a1, a2 = st.columns(2)
 a1.markdown("**Most recent openings**")
 a1.dataframe(
-    op.nlargest(12, "opened_date")[["opened_date", "name", "brand", "borough", "opened_source"]],
+    op.nlargest(15, "opened_date")[
+        ["opened_date", "name", "brand", "address", "borough", "opened_source"]
+    ],
     hide_index=True,
     width="stretch",
     column_config=DATE_COLS,
 )
 a2.markdown("**Most recent closings**")
 a2.dataframe(
-    cl.nlargest(12, "closed_date")[["closed_date", "name", "brand", "borough", "closed_source"]],
+    cl.nlargest(15, "closed_date")[
+        ["closed_date", "name", "brand", "address", "borough", "closed_source"]
+    ],
     hide_index=True,
     width="stretch",
     column_config=DATE_COLS,
@@ -187,7 +191,7 @@ with tab_tl:
     d1.markdown(f"**Opened in {yr}**")
     d1.dataframe(
         op[op["opened_date"].dt.year == yr][
-            ["opened_date", "name", "brand", "borough", "opened_source"]
+            ["opened_date", "name", "brand", "address", "borough", "opened_source"]
         ].sort_values("opened_date"),
         hide_index=True,
         width="stretch",
@@ -196,7 +200,7 @@ with tab_tl:
     d2.markdown(f"**Closed in {yr}**")
     d2.dataframe(
         cl[cl["closed_date"].dt.year == yr][
-            ["closed_date", "name", "brand", "borough", "closed_source"]
+            ["closed_date", "name", "brand", "address", "borough", "closed_source"]
         ].sort_values("closed_date"),
         hide_index=True,
         width="stretch",

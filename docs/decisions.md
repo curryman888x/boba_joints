@@ -2,6 +2,20 @@
 
 Short log of non-obvious choices. Newest first.
 
+## Borough is point-in-polygon, not a locality string
+Overture `locality` is neighbourhood-level ("Woodside", "Flushing") and DOHMH
+`boro` and Overture disagree on names ("Manhattan" vs "New York"). Worse, the NYC
+bbox rectangle covers slices of Nassau (Great Neck, Manhasset) and Westchester
+(New Rochelle). `boba/seed.py` loads NYC's official borough polygons
+(`boroughs` table); `analyze.py` does `ST_Contains` to assign the borough and
+**drops any shop outside all five** (~14). DOHMH `boro` is a fallback only for a
+point that lands just off a polygon (shoreline geocode).
+
+## BOBA_NAME_PATTERN carries newer chains explicitly
+HeyTea, Molly Tea, Auntea Jenny, Chun Yang, Sunright, Chagee etc. contain no
+generic keyword, so they're listed by name. Without them these chains only
+appeared where an Overture `bubble_tea` point happened to be within 60 m.
+
 ## Contracts: pydantic + pandera + a manifest table
 Data pipelines rot silently when a source changes shape. `boba/contracts.py`
 validates every Overture record (pydantic — nested structs, fails on an unknown

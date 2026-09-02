@@ -50,7 +50,11 @@ BOBA_NAME_PATTERN = (
     r"yi\s*fang|moge\s*tee|m[o0]ge\s*tee|machi\s*machi|the\s*alley|tp\s*tea|ten\s*ren|"
     r"quickly|possmei|wanpo|truedan|meet\s*fresh|no[.\s]*1\s*bubble|"
     r"tea\s*(?:&|and)\s*milk|milktea|teado|boba\s*guys|omomo|smoodee|tastea|tea\s*more|"
-    r"i[- ]?tea|it'?s\s*boba|boba\s*tea|bubble\s*house|tea\s*station|comebuy|come\s*buy"
+    r"i[- ]?tea|it'?s\s*boba|boba\s*tea|bubble\s*house|tea\s*station|comebuy|come\s*buy|"
+    # newer chains that carry no generic keyword:
+    r"hey\s*tea|heytea|molly\s*tea|auntea|chun\s*yang|sunright|chagee|one\s*zo|"
+    r"wushiland|bar\s*pa\s*tea|tsaocaa|ts[aâ]o\s*caa|dakasi|truwin|zhen\s*gu\s*li|"
+    r"\bfeng\s*cha\b|chun\s*cui\s*he|xiao\s*mei|7\s*leaves|nine\s*leaves"
     r")"
 )
 

@@ -51,6 +51,18 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+class Borough(Base):
+    """The five NYC borough polygons (seeded from NYC Open Data). analyze.py does
+    a point-in-polygon against these to assign a borough and drop non-NYC points."""
+
+    __tablename__ = "boroughs"
+
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    geom: Mapped[object] = mapped_column(
+        Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True)
+    )
+
+
 class IngestRun(Base):
     """One row per ingest invocation -- the manifest that lets a later run detect
     that a source changed shape (schema, enum values, date coverage, volume)."""

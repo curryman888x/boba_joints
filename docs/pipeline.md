@@ -1,6 +1,7 @@
 # Pipeline
 
-`just all` runs: `db-up → migrate → ingest-overture → ingest-dohmh → match → analyze → check`.
+`just all` runs: `db-up → migrate → seed → ingest-overture → ingest-dohmh → match → analyze → check`.
+(`seed` loads the NYC borough polygons that `analyze` uses for point-in-polygon.)
 
 ```mermaid
 flowchart TD
