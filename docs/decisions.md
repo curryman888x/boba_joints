@@ -2,6 +2,27 @@
 
 Short log of non-obvious choices. Newest first.
 
+## Dates are `first_seen` / `last_seen`, not `opened` / `closed`
+DOHMH has no opening or closing field — it's inspection data. Calling the first
+inspection date an "opening date" overclaims (it lags the true opening by the
+permit gap). Fields renamed to `first_seen_date` / `last_seen_date`, read as
+"operating by / still operating at", ±1 quarter. `closed_date` is set only on a
+real closure signal. The year summary is "first seen per year", a proxy.
+
+## Yelp for current status (name + address match)
+Overture's `operating_status` is unreliable (said "open" for Come Buy / Tea La
+Ra, both closed). `boba/ingest/yelp.py` resolves each shop to a Yelp business via
+`/businesses/matches` (name + address1 + city + state + zip) then reads
+`is_closed` from `/businesses/{id}`. Feeds `analyze` as `yelp_closed` (beats a
+stale inspection) / `yelp_open` (outranks `overture_open`). Capped + cached;
+no-ops without a key. DOHMH stays the timeline; Yelp is the current-status layer.
+
+## Dropped `status_events` and `overture_place_snapshots`
+`status_events` just split `boba_shops` columns into rows and nothing read it.
+`overture_place_snapshots` was written every run and never read (release-diffing
+we didn't build); `first_seen_release` on `overture_places` still tracks first
+appearance. Both removed; migrations re-squashed to one.
+
 ## Borough is point-in-polygon, not a locality string
 Overture `locality` is neighbourhood-level ("Woodside", "Flushing") and DOHMH
 `boro` and Overture disagree on names ("Manhattan" vs "New York"). Worse, the NYC

@@ -82,35 +82,46 @@ Overture `locality` is neighbourhood-level ("Woodside") and disagrees with DOHMH
   Westchester — Great Neck, Manhasset, New Rochelle, …)
 - no geometry but a CAMIS → DOHMH `boro` fallback (DOHMH is NYC-only)
 
-## 4. Deriving opened / closed (`boba/analyze.py`)
+## 4. Dates (`boba/analyze.py`) — evidence bounds, not lifecycle events
 
-### opened_date (first match wins)
-| signal | precision | note |
+**DOHMH has no opening or closing field.** It records dated *health inspections*.
+So the `boba_shops` date columns are named for what they actually are:
+
+### `first_seen_date` / `first_seen_source`
+| source | what it is | bias |
 |---|---|---|
-| DOHMH first inspection date | month | strongest — a new permit is inspected within weeks |
-| Overture `first_seen_release` | quarter | **only** once a place has persisted across ≥ 2 of our ingests; meaningless on the first run |
-| — | — | Overture `source_update_time` is **deliberately not used** — it's when Overture last touched the record, clusters in the current year, and is not an opening |
+| `dohmh_first_inspection` | earliest DOHMH inspection — preferring the **"Pre-permit / Initial"** inspection (done as a new food business is licensed to open); 105 of 195 boba CAMIS have one | **late** — the inspection is on/after opening, typically weeks to a quarter |
+| `overture_release` | earliest Overture release the place appears in — **only** once it has persisted across ≥ 2 of our ingests | quarter |
 
-~244 of 523 shops get a real opened date; the other ~279 have none (no DOHMH
-match — the coverage gap, left explicit rather than faked).
+Read `first_seen_date` as **"operating by at least this date, ±1 quarter"** — not
+"opened on". Overture `source_update_time` is deliberately unused (it clusters in
+the current year). ~245 of 512 shops get one; the rest have no DOHMH match.
 
-### closed_date / status
+The year summary is **"first seen per year"**, a proxy for openings. The 2023
+jump (15 → 92) is real; the split between adjacent years has ±1 quarter of
+per-shop noise.
 
-`status` is one of `open` / `closed` / `unknown`. **`open` requires a positive
-signal** — a DOHMH inspection within `INACTIVE_DAYS` (550), or Overture
-`operating_status = 'open'`. With no signal either way (Overture-only shop,
-`operating_status` NULL, no DOHMH record) the status is **`unknown`**, not `open`
-— a stale record can't be distinguished from a genuinely-new shop. (~70 of 523.)
+### `last_seen_date`
+Latest evidence the shop existed — `max(DOHMH last inspection, Overture release)`.
 
-| closed signal | confidence | note |
+### `status` / `status_basis`
+`status` ∈ `open` / `closed` / `unknown`. **`open` requires a positive signal**;
+with none, status is `unknown` (~63) — a stale record can't be told from a new
+shop. `status_basis` records which signal, strongest first:
+
+| basis | meaning | trust |
 |---|---|---|
-| DOHMH `Establishment Closed by DOHMH` action, not reopened | high | health-department closure — rare (~4) |
-| Overture `operating_status == permanently_closed` | low–medium | current snapshot; date ≈ `source_update_time` |
-| No inspection in > `INACTIVE_DAYS` (550) and not force-closed | low | "went silent" ≈ likely closed |
+| `dohmh_closed_by_dohmh` | DOHMH "Establishment Closed" action, not reopened (health closure, ~4) | high |
+| `yelp_closed` | Yelp `is_closed` — current; beats a stale inspection | high |
+| `overture_permanently_closed` | Overture snapshot | low–med |
+| `dohmh_inactive` | no inspection in > `INACTIVE_DAYS` (550) and not force-closed | low |
+| `dohmh_active` | inspected within ~18 months | high (open) |
+| `yelp_open` | Yelp says open | high (open) |
+| `overture_open` | **only** Overture's `operating_status` — it lags real closures (~194) | **low** |
+| `none` | no signal → `unknown` | — |
 
-`opened > closed` contradictions drop the weaker opened proxy.
+`first_seen > closed` contradictions drop the weaker `first_seen`.
 
 ### Output
-`status_events` (opened / closed / reopened, each with source + confidence),
-`data/boba_status.csv`, and a 2022–2026 openings/closings/net summary by year and
-borough.
+`data/boba_status.csv` and the year summary. (No `status_events` table — it just
+split these columns into rows.)

@@ -1,13 +1,12 @@
 """Database schema.
 
   * reference       -- boroughs (seeded), ingest_runs (manifest)
-  * raw ingest      -- overture_places, overture_place_snapshots,
-                       dohmh_establishments, dohmh_inspections
-  * linking         -- place_matches
-  * derived         -- boba_shops, status_events
+  * raw ingest      -- overture_places, dohmh_establishments, dohmh_inspections
+  * linking         -- place_matches, yelp_status
+  * derived         -- boba_shops
 
-`boba_shops` + `status_events` are truncated and rebuilt by boba/analyze.py from
-the raw + linking tables; those are the source of truth.
+`boba_shops` is truncated and rebuilt by boba/analyze.py from the raw + linking
+tables; those are the source of truth.
 """
 
 from __future__ import annotations

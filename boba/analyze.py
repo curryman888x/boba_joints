@@ -6,9 +6,10 @@ One ``boba_shops`` row per real-world shop, from three populations:
 * Overture boba place with no CAMIS         (Overture-only)
 * boba CAMIS (name-matched OR label-propagated) with no Overture match (DOHMH-only)
 
-opened_date / closed_date are blended from the signals available, each tagged
-with a source and precision. ``status_events`` gets an opened / closed / reopened
-row per shop. Also prints a 2022-2026 summary and writes data/boba_status.csv.
+first_seen_date / last_seen_date are *evidence bounds* (mostly DOHMH inspection
+dates), not lifecycle events; closed_date is set only on a real closure signal.
+status + status_basis capture open/closed/unknown and why. Prints a "first seen
+per year" summary and writes data/boba_status.csv.
 """
 
 from __future__ import annotations
