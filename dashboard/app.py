@@ -170,9 +170,7 @@ with tab_tl:
     st.plotly_chart(fig, width="stretch")
     st.dataframe(tl.set_index("year"), width="stretch")
 
-    st.markdown(
-        "**Every opening / closing on a date axis** — click a borough in the legend to hide it"
-    )
+    st.markdown("**Every opening / closing on a date axis** — click a borough to hide it")
     ev = pd.concat(
         [
             op.assign(kind="opened", date=op["opened_date"]),
@@ -180,16 +178,17 @@ with tab_tl:
         ]
     )[["date", "kind", "name", "brand", "borough"]]
     ev["brand"] = ev["brand"].fillna("")
-    fig = px.scatter(
+    fig = px.strip(
         ev,
         x="date",
         y="kind",
         color="borough",
         hover_name="name",
-        hover_data={"brand": True, "date": "|%Y-%m-%d", "kind": True},
-        height=230,
+        hover_data={"brand": True, "date": "|%Y-%m-%d", "kind": False},
+        stripmode="overlay",
+        height=260,
     )
-    fig.update_traces(marker=dict(size=9, opacity=0.7, symbol="line-ns", line_width=2))
+    fig.update_traces(marker={"size": 7, "opacity": 0.6}, jitter=0.8)
     fig.update_layout(xaxis_title="", yaxis_title="", legend_title_text="", margin=dict(t=10, b=0))
     st.plotly_chart(fig, width="stretch")
 
@@ -245,13 +244,17 @@ with tab_map:
             "lat": False,
             "lon": False,
         },
-        map_style="open-street-map",
+        map_style="carto-positron",  # clean grey basemap so the dots pop
         center={"lat": 40.72, "lon": -73.94},
-        zoom=10,
-        height=680,
+        zoom=10.3,
+        height=700,
     )
-    fig.update_traces(marker={"size": 9, "opacity": 0.8})
-    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), legend_title_text="")
+    fig.update_traces(marker={"size": 11, "opacity": 0.85})
+    fig.update_layout(
+        margin=dict(t=0, b=0, l=0, r=0),
+        legend_title_text="",
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+    )
     st.plotly_chart(fig, width="stretch")
     st.caption(
         f"{len(m)} of {len(f)} filtered shops have coordinates. "
