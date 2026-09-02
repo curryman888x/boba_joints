@@ -7,6 +7,9 @@
 flowchart TD
     OV[(Overture Maps<br/>place · public S3 GeoParquet)]
     DH[(NYC DOHMH<br/>inspections · Socrata)]
+    NB[(NYC Open Data<br/>borough polygons)]
+
+    NB -->|boba/seed.py| BORO[(boroughs<br/>5 MultiPolygons)]
 
     OV -->|overturemaps download<br/>5-borough bbox| OVDL[/data/overture_places_&lt;release&gt;.parquet/]
     DH -->|wide dba LIKE net<br/>+ beverage cuisines| DHDL[/data/dohmh_raw_last.parquet/]
@@ -14,9 +17,9 @@ flowchart TD
     OVDL -->|category pre-filter<br/>→ OverturePlaceRecord pydantic<br/>→ overture_is_boba → drop non-NY| OVI[ingest/overture.py]
     DHDL -->|dohmh_frame_schema pandera<br/>→ normalize| DHI[ingest/dohmh.py]
 
-    OVI --> OP[(overture_places<br/>~443, latest release only)]
+    OVI --> OP[(overture_places<br/>~445, latest release only)]
     OVI --> OPS[(overture_place_snapshots<br/>slim row per release)]
-    DHI --> DE[(dohmh_establishments<br/>~2803, 170 boba-name)]
+    DHI --> DE[(dohmh_establishments<br/>~2800, 195 boba-name)]
     DHI --> DI[(dohmh_inspections<br/>~27.5k)]
     DI -. recompute first/last inspection,<br/>closed/reopened .-> DE
 
@@ -27,6 +30,7 @@ flowchart TD
     OP --> A[analyze.py]
     DE --> A
     PM --> A
+    BORO -->|ST_Contains → assign borough,<br/>drop points outside NYC| A
     A -->|merged / Overture-only / DOHMH-only<br/>· opened+closed date blend<br/>· identified_by| BS[(boba_shops<br/>~523)]
     A --> SE[(status_events<br/>opened/closed/reopened)]
     A --> CSV[/data/boba_status.csv/]
@@ -54,6 +58,6 @@ flowchart TD
 | schema | `alembic check` — models ↔ migrations ↔ DB |
 | post-run | `checks.py` — FK resolution, score/date ranges, status enums, the 1900 sentinel |
 
-See [methodology.md](methodology.md) for the matching and date-blending logic,
-[data-sources.md](data-sources.md) for why two sources, and
+See [methodology.md](methodology.md) for the matching, borough assignment, and
+date-blending logic, [data-sources.md](data-sources.md) for why two sources, and
 [decisions.md](decisions.md) for infrastructure choices.

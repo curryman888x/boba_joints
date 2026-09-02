@@ -35,9 +35,13 @@ See [methodology.md](methodology.md) for the matching logic.
 
 | Population | Count | What it means |
 |---|---|---|
-| **merged** | ~170 | in both sources — best case: clean label + real timeline |
-| **Overture-only** | ~280 | Overture has it, no DOHMH match — usually too new to have been inspected, name too different to match, or outside our DOHMH net. Known to exist; opening date unknown. |
-| **DOHMH-only** | ~73 | a boba CAMIS with no Overture point — often a shop that **closed before Overture existed**. This is the churn the project is about, and the reason DOHMH is load‑bearing rather than a mere date lookup. |
+| **merged** | ~171 | in both sources — best case: clean label + real timeline |
+| **Overture-only** | ~267 | Overture has it, no DOHMH match — usually too new to have been inspected, name too different to match, or outside our DOHMH net. Known to exist; opening date unknown. |
+| **DOHMH-only** | ~85 | a boba CAMIS with no Overture point — often a shop that **closed before Overture existed**. This is the churn the project is about, and the reason DOHMH is load‑bearing rather than a mere date lookup. |
+
+(~523 total. Borough comes from a point-in-polygon against NYC's official
+boundaries; shops outside the five boroughs — the bbox rectangle clips Nassau /
+Westchester — are dropped, ~14.)
 
 ## The hard constraint: 2022–2026
 

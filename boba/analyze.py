@@ -190,6 +190,33 @@ def _dates(est, ov, today):
     return opened_d, opened_src, prec, closed_d, closed_src, status
 
 
+def _coord(*vals):
+    for v in vals:
+        if v is not None and pd.notna(v):
+            return float(v)
+    return None
+
+
+def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
+    o_d, o_s, prec, c_d, c_s, status = _dates(est, ov, today)
+    return {
+        "name": name,
+        "overture_id": oid,
+        "camis": camis,
+        "lon": lon,
+        "lat": lat,
+        "borough": None,  # set by _assign_boroughs
+        "_dohmh_boro": dohmh_boro,
+        "opened_date": o_d,
+        "opened_source": o_s,
+        "opened_precision": prec,
+        "closed_date": c_d,
+        "closed_source": c_s,
+        "status": status,
+        "identified_by": _identified_by(ov, est),
+    }
+
+
 def run(since_year: int = SINCE_YEAR) -> None:
     setup()
     est_df = pd.read_sql(text(_ESTABLISHMENTS), engine).set_index("camis")
@@ -199,56 +226,41 @@ def run(since_year: int = SINCE_YEAR) -> None:
     est_used: set[str] = set()
     shops: list[dict] = []
 
-    # 1 + 2: iterate Overture places (merged where a CAMIS matched, else Overture-only)
+    # merged (Overture place + matched CAMIS) and Overture-only
     for oid, ov in zip(ov_df.index, ov_df.itertuples(index=False, name="Ov"), strict=True):
-        est = None
-        if isinstance(ov.camis, str) and ov.camis in est_df.index:
-            est = est_df.loc[ov.camis]
+        est = est_df.loc[ov.camis] if ov.camis in est_df.index else None
+        if est is not None:
             est_used.add(ov.camis)
-        opened_d, opened_src, prec, closed_d, closed_src, status = _dates(est, ov, today)
-        lon = ov.lon if pd.notna(ov.lon) else (est.lon if est is not None else None)
-        lat = ov.lat if pd.notna(ov.lat) else (est.lat if est is not None else None)
         shops.append(
-            {
-                "name": ov.name or (est.dba if est is not None else None),
-                "overture_id": oid,
-                "camis": ov.camis if isinstance(ov.camis, str) else None,
-                "lon": lon,
-                "lat": lat,
-                "borough": None,
-                "_dohmh_boro": est.boro if est is not None else None,
-                "opened_date": opened_d,
-                "opened_source": opened_src,
-                "opened_precision": prec,
-                "closed_date": closed_d,
-                "closed_source": closed_src,
-                "status": status,
-                "identified_by": _identified_by(ov, est),
-            }
+            _shop(
+                name=ov.name or (est.dba if est is not None else None),
+                oid=oid,
+                camis=ov.camis if isinstance(ov.camis, str) else None,
+                lon=_coord(ov.lon, est.lon if est is not None else None),
+                lat=_coord(ov.lat, est.lat if est is not None else None),
+                dohmh_boro=est.boro if est is not None else None,
+                est=est,
+                ov=ov,
+                today=today,
+            )
         )
 
-    # 3: DOHMH-only boba CAMIS with no Overture match
+    # DOHMH-only boba CAMIS with no Overture match
     for camis, est in zip(est_df.index, est_df.itertuples(index=False, name="Est"), strict=True):
         if camis in est_used:
             continue
-        opened_d, opened_src, prec, closed_d, closed_src, status = _dates(est, None, today)
         shops.append(
-            {
-                "name": est.dba,
-                "overture_id": est.overture_id if isinstance(est.overture_id, str) else None,
-                "camis": camis,
-                "lon": est.lon,
-                "lat": est.lat,
-                "borough": None,
-                "_dohmh_boro": est.boro,
-                "opened_date": opened_d,
-                "opened_source": opened_src,
-                "opened_precision": prec,
-                "closed_date": closed_d,
-                "closed_source": closed_src,
-                "status": status,
-                "identified_by": _identified_by(None, est),
-            }
+            _shop(
+                name=est.dba,
+                oid=est.overture_id if isinstance(est.overture_id, str) else None,
+                camis=camis,
+                lon=_coord(est.lon),
+                lat=_coord(est.lat),
+                dohmh_boro=est.boro,
+                est=est,
+                ov=None,
+                today=today,
+            )
         )
 
     shops = _assign_boroughs(shops)
@@ -278,7 +290,7 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
             lon, lat = r["lon"], r["lat"]
             geom = (
                 from_shape(Point(lon, lat), srid=4326)
-                if lon is not None and lat is not None and pd.notna(lon) and pd.notna(lat)
+                if lon is not None and lat is not None
                 else None
             )
             shop = BobaShop(

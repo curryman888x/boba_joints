@@ -6,17 +6,19 @@ There is **no ground-truth list**, so recall is a lower bound. Two mechanisms:
 
 **Overture** (`boba/filters.py::overture_is_boba`)
 - primary: `categories.primary` or `alternate` == `bubble_tea` — Overture's own
-  tag, not a regex. ~435 of 443.
+  tag, not a regex. ~435 of ~445.
 - fallback: category in a broader set (`cafe`, `tea_room`, `dessert_shop`, …)
-  **and** the name matches `BOBA_NAME_PATTERN`. ~8 more.
+  **and** the name matches `BOBA_NAME_PATTERN`. ~10 more.
 
 **DOHMH** (`boba/filters.py::dohmh_is_boba`)
 - **100% name regex** on `dba` (`BOBA_NAME_PATTERN` — chains + keyword fragments).
-  DOHMH has no bubble-tea cuisine, so there is no category path.
+  DOHMH has no bubble-tea cuisine, so there is no category path. ~195 CAMIS.
+- The pattern lists newer chains explicitly (HeyTea, Molly Tea, Auntea Jenny,
+  Chun Yang, Sunright, Chagee, …) because their names carry no generic keyword.
 
 **Label propagation** (`boba/match.py`)
 - Any DOHMH establishment that matches an Overture `bubble_tea` place (below)
-  counts as boba even if its `dba` never hit the regex. Recovers ~71
+  counts as boba even if its `dba` never hit the regex. Recovers ~60
   establishments the regex alone misses.
 
 ### Provenance — `boba_shops.identified_by`
@@ -26,12 +28,12 @@ confidence:
 
 | value | meaning | count | precision-backed by |
 |---|---|---|---|
-| `overture_category` | Overture `bubble_tea` tag, no independent name hit | ~222 | Overture's curated taxonomy |
-| `both` | Overture `bubble_tea` **and** a name match | ~206 | strongest |
-| `name_pattern` | name regex only (Overture fallback name, or DOHMH `dba`) | ~94 | needs vetting |
+| `both` | Overture `bubble_tea` **and** a name match | ~217 | strongest |
+| `overture_category` | Overture `bubble_tea` tag, no independent name hit | ~197 | Overture's curated taxonomy |
+| `name_pattern` | name regex only (Overture fallback name, or DOHMH `dba`) | ~108 | needs vetting |
 | `propagated` | no category or name hit anywhere — pure spatial inference | ~1 | weakest |
 
-So ~428 of 523 rest on Overture's tag; ~94 on the regex alone.
+So ~414 of 523 rest on Overture's tag; ~108 on the regex alone.
 
 ### Known gaps
 - Independents with no keyword in the name ("Sunright Tea Studio", "O-CHA").
@@ -50,7 +52,7 @@ per-`identified_by` precision, and list concrete rejects.
 
 Report counts as **"≥ N (name/category identification)"**, never a hard "N".
 The recall universe is DOHMH `cuisine_description = 'Coffee/Tea'` (~2,220
-establishments; the pipeline flags ~175).
+establishments; the pipeline flags ~195).
 
 ## 2. Matching Overture ↔ DOHMH (`boba/match.py`)
 
@@ -69,7 +71,18 @@ establishments; the pipeline flags ~175).
 Idempotent (`truncate place_matches` + rebuild). `score` / `name_similarity` /
 `method` are kept so a review pass can accept/reject the tail.
 
-## 3. Deriving opened / closed (`boba/analyze.py`)
+## 3. Borough + NYC filter (`boba/analyze.py`)
+
+Overture `locality` is neighbourhood-level ("Woodside") and disagrees with DOHMH
+`boro` on names. `boba/seed.py` loads NYC's official borough polygons into
+`boroughs`; `analyze._assign_boroughs` does `ST_Contains` on each shop's point:
+
+- in a borough → that borough's name (one of exactly five)
+- outside all five → **dropped** (~14; the NYC bbox rectangle clips Nassau and
+  Westchester — Great Neck, Manhasset, New Rochelle, …)
+- no geometry but a CAMIS → DOHMH `boro` fallback (DOHMH is NYC-only)
+
+## 4. Deriving opened / closed (`boba/analyze.py`)
 
 ### opened_date (first match wins)
 | signal | precision | note |
@@ -78,7 +91,7 @@ Idempotent (`truncate place_matches` + rebuild). `score` / `name_similarity` /
 | Overture `first_seen_release` | quarter | **only** once a place has persisted across ≥ 2 of our ingests; meaningless on the first run |
 | — | — | Overture `source_update_time` is **deliberately not used** — it's when Overture last touched the record, clusters in the current year, and is not an opening |
 
-~231 of 523 shops get a real opened date; the other ~292 have none (no DOHMH
+~244 of 523 shops get a real opened date; the other ~279 have none (no DOHMH
 match — the coverage gap, left explicit rather than faked).
 
 ### closed_date / status
