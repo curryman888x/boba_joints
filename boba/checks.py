@@ -69,8 +69,8 @@ INVARIANTS: list[tuple[str, str]] = [
         "left join boba_shops s on s.id = e.boba_shop_id where s.id is null",
     ),
     (
-        "every ok ingest_run recorded a row_count",
-        "select count(*) from ingest_runs where status = 'ok' and row_count is null",
+        "every ok ingest_run recorded a kept_count",
+        "select count(*) from ingest_runs where status = 'ok' and kept_count is null",
     ),
 ]
 

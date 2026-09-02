@@ -1,35 +1,288 @@
-"""Derive the canonical boba shop list and the opened/closed timeline.
+"""Build the canonical boba-shop list and the opened/closed timeline.
 
-Plan:
-  1. Build one `boba_shops` row per real-world shop:
-       - Overture place + its matched CAMIS  -> merged row
-       - Overture place with no CAMIS        -> Overture-only row
-       - boba_name_match CAMIS with no Overture match -> DOHMH-only row
-  2. opened_date:
-       - DOHMH first_inspection_date if present (precision: month), else
-       - earliest Overture release the place appears in (precision: quarter), else
-       - Overture source_update_time (precision: year, low confidence)
-  3. closed_date / status:
-       - DOHMH closed_date (high), else
-       - Overture operating_status == 'permanently_closed' (proxy), else
-       - present in an old Overture snapshot but absent from latest + no recent
-         DOHMH inspection (low), else status='open'
-  4. Emit `status_events` (opened / closed / reopened) and print a summary:
-     openings and closings per year 2020..now, net change, still-open count,
-     broken out by borough.  Also write data/boba_status.csv.
+One ``boba_shops`` row per real-world shop, from three populations:
 
-Not implemented yet.
+* Overture boba place + its matched CAMIS  (merged)
+* Overture boba place with no CAMIS         (Overture-only)
+* boba CAMIS (name-matched OR label-propagated) with no Overture match (DOHMH-only)
+
+opened_date / closed_date are blended from the signals available, each tagged
+with a source and precision. ``status_events`` gets an opened / closed / reopened
+row per shop. Also prints a 2022-2026 summary and writes data/boba_status.csv.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 
-SINCE_YEAR = 2020
+import pandas as pd
+from sqlalchemy import text
+
+from boba.config import data_dir
+from boba.contracts import ingest_run
+from boba.db import SessionLocal, engine
+from boba.log import get_logger, setup
+from boba.models import BobaShop, StatusEvent
+
+log = get_logger("boba.analyze")
+
+SINCE_YEAR = 2022  # DOHMH inspection history floor; nothing credible before this
+INACTIVE_DAYS = 550  # no inspection in ~18 months + not force-closed => likely closed
+
+# CAMIS that are boba: name-matched OR linked to an Overture boba place (propagation)
+_BOBA_CAMIS = """
+    select camis from dohmh_establishments where boba_name_match
+    union
+    select camis from place_matches
+"""
+
+# best (lowest score) match per CAMIS, for the DOHMH-only / merged join
+_ESTABLISHMENTS = f"""
+    select e.camis, e.dba, e.boro, e.first_inspection_date, e.last_inspection_date,
+           e.closed_flag, e.closed_date, e.reopened_date,
+           st_x(e.geom) lon, st_y(e.geom) lat,
+           m.overture_id, m.score
+    from dohmh_establishments e
+    left join lateral (
+        select overture_id, score from place_matches pm
+        where pm.camis = e.camis order by score desc limit 1
+    ) m on true
+    where e.camis in ({_BOBA_CAMIS})
+"""
+
+_OVERTURE = """
+    select o.id as overture_id, o.name, o.locality, o.operating_status,
+           o.source_update_time, o.first_seen_release, o.last_seen_release,
+           st_x(o.geom) lon, st_y(o.geom) lat,
+           m.camis
+    from overture_places o
+    left join lateral (
+        select camis, score from place_matches pm
+        where pm.overture_id = o.id order by score desc limit 1
+    ) m on true
+"""
+
+_BOROUGH = {
+    "1": "Manhattan",
+    "2": "Bronx",
+    "3": "Brooklyn",
+    "4": "Queens",
+    "5": "Staten Island",
+    "manhattan": "Manhattan",
+    "bronx": "Bronx",
+    "brooklyn": "Brooklyn",
+    "queens": "Queens",
+    "staten island": "Staten Island",
+}
+
+
+def _borough(boro, locality) -> str | None:
+    for v in (boro, locality):
+        if isinstance(v, str) and v.strip():
+            return _BOROUGH.get(v.strip().lower(), v.strip())
+    return None
+
+
+def _release_date(rel: str | None) -> dt.date | None:
+    if not rel:
+        return None
+    try:
+        return dt.date.fromisoformat(rel.split(".")[0])
+    except ValueError:
+        return None
+
+
+def _opened(est, ov) -> tuple[dt.date | None, str | None, str | None]:
+    if est is not None and pd.notna(est.first_inspection_date):
+        return est.first_inspection_date, "dohmh_first_inspection", "month"
+    # first_seen_release is only meaningful once a place has persisted across
+    # >= 2 of our ingests (otherwise it's just "when we started collecting").
+    # `source_update_time` is deliberately NOT used -- it's when Overture last
+    # touched the record, which clusters in the current year and is not an opening.
+    if ov is not None and ov.first_seen_release and ov.first_seen_release != ov.last_seen_release:
+        rel = _release_date(ov.first_seen_release)
+        if rel:
+            return rel, "overture_first_release", "quarter"
+    return None, None, None
+
+
+def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str]:
+    if est is not None and est.closed_flag and pd.notna(est.closed_date):
+        reopened = pd.notna(est.reopened_date) and est.reopened_date >= est.closed_date
+        if not reopened:
+            return est.closed_date, "dohmh_closed_by_dohmh", "closed"
+    if ov is not None and ov.operating_status == "permanently_closed":
+        d = ov.source_update_time.date() if pd.notna(ov.source_update_time) else None
+        return d, "overture_permanently_closed", "closed"
+    if est is not None and pd.notna(est.last_inspection_date):
+        idle = (today - est.last_inspection_date).days
+        if idle > INACTIVE_DAYS and not est.closed_flag:
+            return est.last_inspection_date, "dohmh_inactive", "closed"
+    return None, None, "open"
+
+
+def _dates(est, ov, today):
+    opened_d, opened_src, prec = _opened(est, ov)
+    closed_d, closed_src, status = _closed(est, ov, today)
+    # a weak opened proxy that postdates a real closure is noise -- drop it
+    if opened_d and closed_d and opened_d > closed_d:
+        opened_d, opened_src, prec = None, None, None
+    return opened_d, opened_src, prec, closed_d, closed_src, status
 
 
 def run(since_year: int = SINCE_YEAR) -> None:
-    raise NotImplementedError("boba.analyze.run")
+    setup()
+    est_df = pd.read_sql(text(_ESTABLISHMENTS), engine).set_index("camis")
+    ov_df = pd.read_sql(text(_OVERTURE), engine).set_index("overture_id")
+    today = dt.date.today()
+
+    est_used: set[str] = set()
+    shops: list[dict] = []
+
+    # 1 + 2: iterate Overture places (merged where a CAMIS matched, else Overture-only)
+    for oid, ov in zip(ov_df.index, ov_df.itertuples(index=False, name="Ov"), strict=True):
+        est = None
+        if isinstance(ov.camis, str) and ov.camis in est_df.index:
+            est = est_df.loc[ov.camis]
+            est_used.add(ov.camis)
+        opened_d, opened_src, prec, closed_d, closed_src, status = _dates(est, ov, today)
+        lon = ov.lon if pd.notna(ov.lon) else (est.lon if est is not None else None)
+        lat = ov.lat if pd.notna(ov.lat) else (est.lat if est is not None else None)
+        shops.append(
+            {
+                "name": ov.name or (est.dba if est is not None else None),
+                "overture_id": oid,
+                "camis": ov.camis if isinstance(ov.camis, str) else None,
+                "lon": lon,
+                "lat": lat,
+                "borough": _borough(est.boro if est is not None else None, ov.locality),
+                "opened_date": opened_d,
+                "opened_source": opened_src,
+                "opened_precision": prec,
+                "closed_date": closed_d,
+                "closed_source": closed_src,
+                "status": status,
+            }
+        )
+
+    # 3: DOHMH-only boba CAMIS with no Overture match
+    for camis, est in zip(est_df.index, est_df.itertuples(index=False, name="Est"), strict=True):
+        if camis in est_used:
+            continue
+        opened_d, opened_src, prec, closed_d, closed_src, status = _dates(est, None, today)
+        shops.append(
+            {
+                "name": est.dba,
+                "overture_id": est.overture_id if isinstance(est.overture_id, str) else None,
+                "camis": camis,
+                "lon": est.lon,
+                "lat": est.lat,
+                "borough": _borough(est.boro, None),
+                "opened_date": opened_d,
+                "opened_source": opened_src,
+                "opened_precision": prec,
+                "closed_date": closed_d,
+                "closed_source": closed_src,
+                "status": status,
+            }
+        )
+
+    merged = sum(1 for s in shops if s["overture_id"] and s["camis"])
+    ov_only = sum(1 for s in shops if s["overture_id"] and not s["camis"])
+    dohmh_only = sum(1 for s in shops if s["camis"] and not s["overture_id"])
+    log.info(
+        "%d boba shops (%d merged, %d Overture-only, %d DOHMH-only)",
+        len(shops),
+        merged,
+        ov_only,
+        dohmh_only,
+    )
+    _write(shops, since_year, today)
+
+
+def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
+    from geoalchemy2.shape import from_shape
+    from shapely.geometry import Point
+
+    with SessionLocal() as s, ingest_run(s, "analyze") as m:
+        s.execute(text("truncate boba_shops restart identity cascade"))
+        for r in shops:
+            lon, lat = r["lon"], r["lat"]
+            geom = (
+                from_shape(Point(lon, lat), srid=4326)
+                if lon is not None and lat is not None and pd.notna(lon) and pd.notna(lat)
+                else None
+            )
+            shop = BobaShop(
+                name=r["name"],
+                overture_id=r["overture_id"],
+                camis=r["camis"],
+                geom=geom,
+                borough=r["borough"],
+                opened_date=r["opened_date"],
+                opened_source=r["opened_source"],
+                opened_precision=r["opened_precision"],
+                closed_date=r["closed_date"],
+                closed_source=r["closed_source"],
+                status=r["status"],
+            )
+            s.add(shop)
+            s.flush()
+            if r["opened_date"]:
+                s.add(
+                    StatusEvent(
+                        boba_shop_id=shop.id,
+                        event_type="opened",
+                        event_date=r["opened_date"],
+                        source=r["opened_source"],
+                        confidence="high" if r["opened_precision"] == "month" else "proxy",
+                    )
+                )
+            if r["closed_date"] and r["status"] == "closed":
+                conf = "high" if r["closed_source"] == "dohmh_closed_by_dohmh" else "low"
+                s.add(
+                    StatusEvent(
+                        boba_shop_id=shop.id,
+                        event_type="closed",
+                        event_date=r["closed_date"],
+                        source=r["closed_source"],
+                        confidence=conf,
+                    )
+                )
+        m.row_count = len(shops)
+        m.kept_count = len(shops)
+        m.detail = {
+            "open": sum(1 for r in shops if r["status"] == "open"),
+            "closed": sum(1 for r in shops if r["status"] == "closed"),
+        }
+
+    df = pd.DataFrame(shops)
+    out = data_dir() / "boba_status.csv"
+    df.to_csv(out, index=False)
+    log.info("wrote %s", out)
+    _summary(df, since_year, today)
+
+
+def _summary(df: pd.DataFrame, since_year: int, today: dt.date) -> None:
+    d = df.copy()
+    d["opened_year"] = pd.to_datetime(d["opened_date"], errors="coerce").dt.year
+    d["closed_year"] = pd.to_datetime(d["closed_date"], errors="coerce").dt.year
+    years = list(range(since_year, today.year + 1))
+    op = d["opened_year"].value_counts().reindex(years, fill_value=0)
+    cl = d["closed_year"].value_counts().reindex(years, fill_value=0)
+
+    log.info("--- NYC boba shops, %d-%d ---", since_year, today.year)
+    log.info("year   opened  closed   net")
+    for y in years:
+        log.info("%d   %6d  %6d  %+4d", y, op[y], cl[y], op[y] - cl[y])
+    log.info(
+        "currently: %d open, %d closed, %d unknown",
+        (d["status"] == "open").sum(),
+        (d["status"] == "closed").sum(),
+        (d["status"] == "unknown").sum(),
+    )
+    log.info("by borough:\n%s", d.groupby("borough")["status"].value_counts().to_string())
 
 
 def main(argv: list[str] | None = None) -> None:
