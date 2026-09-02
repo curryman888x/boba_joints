@@ -1,8 +1,8 @@
 """schema
 
-Revision ID: 005dda34b371
+Revision ID: edcdf11c0608
 Revises:
-Create Date: 2026-09-01 20:14:47.646515
+Create Date: 2026-09-01 20:45:56.841672
 
 """
 
@@ -14,7 +14,7 @@ from geoalchemy2 import Geometry
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "005dda34b371"
+revision: str = "edcdf11c0608"
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -218,11 +218,56 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_geospatial_table(
+        "yelp_businesses",
+        sa.Column("yelp_id", sa.String(), nullable=False),
+        sa.Column("name", sa.String(), nullable=True),
+        sa.Column("is_closed", sa.Boolean(), nullable=True),
+        sa.Column("rating", sa.Float(), nullable=True),
+        sa.Column("review_count", sa.Integer(), nullable=True),
+        sa.Column("price", sa.String(), nullable=True),
+        sa.Column("phone", sa.String(), nullable=True),
+        sa.Column("url", sa.String(), nullable=True),
+        sa.Column("categories", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("address", sa.String(), nullable=True),
+        sa.Column("city", sa.String(), nullable=True),
+        sa.Column("zip", sa.String(), nullable=True),
+        sa.Column(
+            "geom",
+            Geometry(
+                geometry_type="POINT",
+                srid=4326,
+                dimension=2,
+                spatial_index=False,
+                from_text="ST_GeomFromEWKT",
+                name="geometry",
+                nullable=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "checked_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.PrimaryKeyConstraint("yelp_id", name=op.f("pk_yelp_businesses")),
+    )
+    op.create_geospatial_index(
+        "idx_yelp_businesses_geom",
+        "yelp_businesses",
+        ["geom"],
+        unique=False,
+        postgresql_using="gist",
+        postgresql_ops={},
+    )
+    op.create_index(op.f("ix_yelp_businesses_name"), "yelp_businesses", ["name"], unique=False)
+    op.create_geospatial_table(
         "boba_shops",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(), nullable=True),
         sa.Column("overture_id", sa.String(), nullable=True),
         sa.Column("camis", sa.String(), nullable=True),
+        sa.Column("yelp_id", sa.String(), nullable=True),
         sa.Column(
             "geom",
             Geometry(
@@ -255,7 +300,7 @@ def upgrade() -> None:
             name=op.f("ck_boba_shops_first_seen_source"),
         ),
         sa.CheckConstraint(
-            "identified_by in ('overture_category', 'name_pattern', 'both', 'propagated')",
+            "identified_by in ('yelp_category', 'overture_category', 'name_pattern', 'both', 'propagated')",
             name=op.f("ck_boba_shops_identified_by"),
         ),
         sa.CheckConstraint(
@@ -281,6 +326,12 @@ def upgrade() -> None:
             name=op.f("fk_boba_shops_overture_id_overture_places"),
             ondelete="SET NULL",
         ),
+        sa.ForeignKeyConstraint(
+            ["yelp_id"],
+            ["yelp_businesses.yelp_id"],
+            name=op.f("fk_boba_shops_yelp_id_yelp_businesses"),
+            ondelete="SET NULL",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_boba_shops")),
     )
     op.create_geospatial_index(
@@ -304,6 +355,7 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_boba_shops_status_basis"), "boba_shops", ["status_basis"], unique=False
     )
+    op.create_index(op.f("ix_boba_shops_yelp_id"), "boba_shops", ["yelp_id"], unique=False)
     op.create_table(
         "dohmh_inspections",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
@@ -380,19 +432,15 @@ def upgrade() -> None:
         op.f("ix_place_matches_overture_id"), "place_matches", ["overture_id"], unique=False
     )
     op.create_table(
-        "yelp_status",
+        "yelp_matches",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column("yelp_id", sa.String(), nullable=False),
         sa.Column("overture_id", sa.String(), nullable=True),
         sa.Column("camis", sa.String(), nullable=True),
-        sa.Column("yelp_id", sa.String(), nullable=True),
-        sa.Column("yelp_name", sa.String(), nullable=True),
-        sa.Column("is_closed", sa.Boolean(), nullable=True),
-        sa.Column("rating", sa.Float(), nullable=True),
-        sa.Column("review_count", sa.Integer(), nullable=True),
-        sa.Column("url", sa.String(), nullable=True),
-        sa.Column("match_score", sa.Float(), nullable=True),
+        sa.Column("overture_score", sa.Float(), nullable=True),
+        sa.Column("camis_score", sa.Float(), nullable=True),
         sa.Column(
-            "checked_at",
+            "created_at",
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
@@ -400,39 +448,46 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["camis"],
             ["dohmh_establishments.camis"],
-            name=op.f("fk_yelp_status_camis_dohmh_establishments"),
-            ondelete="CASCADE",
+            name=op.f("fk_yelp_matches_camis_dohmh_establishments"),
+            ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
             ["overture_id"],
             ["overture_places.id"],
-            name=op.f("fk_yelp_status_overture_id_overture_places"),
+            name=op.f("fk_yelp_matches_overture_id_overture_places"),
+            ondelete="SET NULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["yelp_id"],
+            ["yelp_businesses.yelp_id"],
+            name=op.f("fk_yelp_matches_yelp_id_yelp_businesses"),
             ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_yelp_status")),
-        sa.UniqueConstraint(
-            "overture_id", "camis", name="uq_yelp_status_key", postgresql_nulls_not_distinct=True
-        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_yelp_matches")),
+        sa.UniqueConstraint("yelp_id", name="uq_yelp_matches_yelp_id"),
     )
-    op.create_index(op.f("ix_yelp_status_camis"), "yelp_status", ["camis"], unique=False)
+    op.create_index(op.f("ix_yelp_matches_camis"), "yelp_matches", ["camis"], unique=False)
     op.create_index(
-        op.f("ix_yelp_status_overture_id"), "yelp_status", ["overture_id"], unique=False
+        op.f("ix_yelp_matches_overture_id"), "yelp_matches", ["overture_id"], unique=False
     )
+    op.create_index(op.f("ix_yelp_matches_yelp_id"), "yelp_matches", ["yelp_id"], unique=False)
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_index(op.f("ix_yelp_status_overture_id"), table_name="yelp_status")
-    op.drop_index(op.f("ix_yelp_status_camis"), table_name="yelp_status")
-    op.drop_table("yelp_status")
+    op.drop_index(op.f("ix_yelp_matches_yelp_id"), table_name="yelp_matches")
+    op.drop_index(op.f("ix_yelp_matches_overture_id"), table_name="yelp_matches")
+    op.drop_index(op.f("ix_yelp_matches_camis"), table_name="yelp_matches")
+    op.drop_table("yelp_matches")
     op.drop_index(op.f("ix_place_matches_overture_id"), table_name="place_matches")
     op.drop_index(op.f("ix_place_matches_camis"), table_name="place_matches")
     op.drop_table("place_matches")
     op.drop_index(op.f("ix_dohmh_inspections_inspection_date"), table_name="dohmh_inspections")
     op.drop_index(op.f("ix_dohmh_inspections_camis"), table_name="dohmh_inspections")
     op.drop_table("dohmh_inspections")
+    op.drop_index(op.f("ix_boba_shops_yelp_id"), table_name="boba_shops")
     op.drop_index(op.f("ix_boba_shops_status_basis"), table_name="boba_shops")
     op.drop_index(op.f("ix_boba_shops_status"), table_name="boba_shops")
     op.drop_index(op.f("ix_boba_shops_overture_id"), table_name="boba_shops")
@@ -444,6 +499,14 @@ def downgrade() -> None:
         "idx_boba_shops_geom", table_name="boba_shops", postgresql_using="gist", column_name="geom"
     )
     op.drop_geospatial_table("boba_shops")
+    op.drop_index(op.f("ix_yelp_businesses_name"), table_name="yelp_businesses")
+    op.drop_geospatial_index(
+        "idx_yelp_businesses_geom",
+        table_name="yelp_businesses",
+        postgresql_using="gist",
+        column_name="geom",
+    )
+    op.drop_geospatial_table("yelp_businesses")
     op.drop_index(op.f("ix_overture_places_overture_release"), table_name="overture_places")
     op.drop_index(op.f("ix_overture_places_operating_status"), table_name="overture_places")
     op.drop_index(op.f("ix_overture_places_category_primary"), table_name="overture_places")

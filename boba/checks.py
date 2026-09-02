@@ -61,15 +61,21 @@ INVARIANTS: list[tuple[str, str]] = [
     ),
     (
         "boba_shops has at least one source id",
-        "select count(*) from boba_shops where overture_id is null and camis is null",
+        "select count(*) from boba_shops "
+        "where overture_id is null and camis is null and yelp_id is null",
     ),
     (
         "boba_shops closed_date only when status = closed",
         "select count(*) from boba_shops where closed_date is not null and status <> 'closed'",
     ),
     (
-        "yelp_status keyed by exactly one id",
-        "select count(*) from yelp_status where (overture_id is null) = (camis is null)",
+        "yelp_matches reference a yelp_business",
+        "select count(*) from yelp_matches m "
+        "left join yelp_businesses b on b.yelp_id = m.yelp_id where b.yelp_id is null",
+    ),
+    (
+        "yelp_matches link to at least one side",
+        "select count(*) from yelp_matches where overture_id is null and camis is null",
     ),
     (
         "every ok ingest_run recorded a kept_count",

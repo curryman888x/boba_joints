@@ -1,176 +1,278 @@
-"""Yelp Fusion ingest -- current open/closed for shops DOHMH can't verify.
+"""Yelp Fusion ingest -- the primary boba discovery source.
 
-For every Overture boba place and every boba-name DOHMH establishment with no
-Overture match, resolve it to a Yelp business by **name + address**
-(``/businesses/matches``), then read ``is_closed`` from ``/businesses/{id}``.
-Result lands in ``yelp_status`` (keyed by overture_id or camis); ``analyze.py``
-folds it in above Overture's ``operating_status``.
+``discover``: enumerate NYC ``bubbletea`` businesses via ``/businesses/search``,
+adaptively subdividing the bbox wherever a tile hits Yelp's 240-result ceiling.
+Each result carries ``is_closed`` (free current status). -> ``yelp_businesses``.
 
-Two calls per shop, so this is capped (``--limit``) and cached: a target checked
-within ``--max-age-days`` is skipped. Run across a few days for full coverage,
-then monthly to refresh.
+``link``: match each Yelp business to its Overture place (brand/geom) and DOHMH
+CAMIS (first_seen / dates) by name + distance. -> ``yelp_matches``.
+
+Capped by ``--limit`` calls; ``discover`` is skipped if the last run was within
+``--max-age-days``. No-ops without ``YELP_API_KEY``.
 """
 
 from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
+from math import asin, cos, radians, sin, sqrt
 
 from rapidfuzz import fuzz
 from sqlalchemy import text
 
-from boba.config import (
-    YELP_API_KEY,
-    YELP_BUSINESS_URL,
-    YELP_MATCH_URL,
-)
-from boba.contracts import ingest_run
+from boba.config import NYC_BBOX, YELP_API_KEY, YELP_SEARCH_URL
+from boba.contracts import ContractViolation, ingest_run, last_successful_run, parse_yelp_business
 from boba.db import SessionLocal, engine, upsert
-from boba.filters import name_key
+from boba.filters import name_key, name_looks_like_boba
 from boba.log import get_logger, setup
-from boba.models import YelpStatus
+from boba.models import YelpBusiness, YelpMatch
 from boba.net import yelp_session
 
 log = get_logger("boba.ingest.yelp")
 
-_NAME_MIN = 70.0  # reject a /matches result whose name is this different
+_PAGE = 50
+_YELP_MAX_OFFSET = 240  # Yelp returns at most 240 results per search
+_MAX_DEPTH = 5
+_LINK_RADIUS_M = 160.0
+_LINK_NAME_MIN = 60.0
 
-_TARGETS_SQL = text(
+
+def _haversine_m(lon1, lat1, lon2, lat2) -> float:
+    dlon, dlat = radians(lon2 - lon1), radians(lat2 - lat1)
+    h = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    return 2 * 6_371_000 * asin(sqrt(h))
+
+
+def _in_bbox(lon, lat, bbox) -> bool:
+    return bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]
+
+
+def _search_tile(sess, bbox, budget: list[int]) -> list[dict]:
+    """All bubbletea businesses for one bbox tile (paged, <= 240)."""
+    lo_lon, lo_lat, hi_lon, hi_lat = bbox
+    clat, clon = (lo_lat + hi_lat) / 2, (lo_lon + hi_lon) / 2
+    radius = min(40000, int(_haversine_m(lo_lon, lo_lat, hi_lon, hi_lat) / 2) + 200)
+    out: list[dict] = []
+    for offset in range(0, _YELP_MAX_OFFSET, _PAGE):
+        if budget[0] <= 0:
+            break
+        lim = min(_PAGE, _YELP_MAX_OFFSET - offset)  # Yelp requires offset + limit <= 240
+        r = sess.get(
+            YELP_SEARCH_URL,
+            params={
+                "categories": "bubbletea",
+                "latitude": clat,
+                "longitude": clon,
+                "radius": radius,
+                "limit": lim,
+                "offset": offset,
+                "sort_by": "distance",
+            },
+            timeout=30,
+        )
+        budget[0] -= 1
+        if r.status_code == 429:
+            log.warning("Yelp rate limit -- stopping discovery")
+            budget[0] = 0
+            break
+        r.raise_for_status()
+        batch = r.json().get("businesses", [])
+        out.extend(batch)
+        if len(batch) < lim:
+            break
+    return out
+
+
+def _quadrants(bbox):
+    lo_lon, lo_lat, hi_lon, hi_lat = bbox
+    mlon, mlat = (lo_lon + hi_lon) / 2, (lo_lat + hi_lat) / 2
+    return [
+        (lo_lon, lo_lat, mlon, mlat),
+        (mlon, lo_lat, hi_lon, mlat),
+        (lo_lon, mlat, mlon, hi_lat),
+        (mlon, mlat, hi_lon, hi_lat),
+    ]
+
+
+def _sweep(sess, bbox, seen: dict, budget: list[int], depth: int = 0) -> None:
+    if budget[0] <= 0:
+        return
+    batch = _search_tile(sess, bbox, budget)
+    for b in batch:
+        if b.get("id"):
+            seen[b["id"]] = b
+    if len(batch) >= _YELP_MAX_OFFSET and depth < _MAX_DEPTH:
+        log.info("tile saturated at depth %d -- subdividing", depth)
+        for q in _quadrants(bbox):
+            _sweep(sess, q, seen, budget, depth + 1)
+
+
+def discover(limit: int) -> int:
+    sess = yelp_session()
+    seen: dict[str, dict] = {}
+    budget = [limit]
+    _sweep(sess, NYC_BBOX, seen, budget)
+    log.info("discovery: %d unique Yelp businesses (%d calls used)", len(seen), limit - budget[0])
+
+    rows, violations, off_topic = [], 0, 0
+    for raw in seen.values():
+        try:
+            rec = parse_yelp_business(raw)
+        except ContractViolation as exc:
+            violations += 1
+            log.warning("contract: %s", str(exc).splitlines()[0][:160])
+            continue
+        if not _in_bbox(rec.lon, rec.lat, NYC_BBOX):
+            continue
+        aliases = [c.get("alias") for c in rec.categories]
+        # Yelp over-tags: a ramen place with bubbletea 3rd isn't a boba shop.
+        # Keep it only if bubbletea is the primary category, or the name says so.
+        if not (aliases[:1] == ["bubbletea"] or name_looks_like_boba(rec.name)):
+            off_topic += 1
+            continue
+        rows.append(
+            {
+                "yelp_id": rec.yelp_id,
+                "name": rec.name,
+                "is_closed": rec.is_closed,
+                "rating": rec.rating,
+                "review_count": rec.review_count,
+                "price": rec.price,
+                "phone": rec.phone,
+                "url": rec.url,
+                "categories": rec.categories,
+                "address": rec.address,
+                "city": rec.city,
+                "zip": rec.zip,
+                "geom": f"SRID=4326;POINT({rec.lon} {rec.lat})",
+                "checked_at": datetime.now(UTC),
+            }
+        )
+
+    with SessionLocal() as s, ingest_run(s, "yelp_discover") as m:
+        upsert(s, YelpBusiness, rows, index_elements=["yelp_id"])
+        swept = 0
+        ids = [r["yelp_id"] for r in rows]
+        if ids and len(ids) > 200:  # guard against a thin sweep on a rate-limited run
+            swept = s.execute(
+                text("delete from yelp_businesses where not (yelp_id = any(:ids))"),
+                {"ids": ids},
+            ).rowcount
+        m.row_count = len(seen)
+        m.kept_count = len(rows)
+        m.detail = {
+            "violations": violations,
+            "off_topic": off_topic,
+            "swept": swept,
+            "calls": limit - budget[0],
+        }
+    log.info(
+        "discover: %d NYC boba businesses (%d off-topic dropped, %d contract)",
+        len(rows),
+        off_topic,
+        violations,
+    )
+    return len(rows)
+
+
+_CAND_SQL = text(
     """
-    select 'overture' as src, o.id as key, o.name,
-           o.addr_freeform as addr, null as city, o.postcode as zip
-    from overture_places o
-    union all
-    select 'dohmh', e.camis, e.dba,
-           nullif(trim(concat_ws(' ', e.building, e.street)), ''), e.boro, e.zipcode
-    from dohmh_establishments e
-    where e.boba_name_match and e.geom is not null
-      and not exists (select 1 from place_matches m where m.camis = e.camis)
+    select y.yelp_id, y.name as y_name,
+           src, cand_id, cand_name,
+           st_distance(y.geom::geography, cand_geom::geography) as dist_m
+    from yelp_businesses y
+    cross join lateral (
+        select 'overture' as src, p.id::text as cand_id, p.name as cand_name, p.geom as cand_geom
+        from overture_places p
+        where st_dwithin(p.geom::geography, y.geom::geography, :r)
+        union all
+        select 'dohmh', e.camis, e.dba, e.geom
+        from dohmh_establishments e
+        where e.geom is not null and st_dwithin(e.geom::geography, y.geom::geography, :r)
+    ) c
     """
 )
 
 
-def _match(sess, t) -> str | None:
-    """/businesses/matches -> the best-matching Yelp business id, or None."""
-    if not t.addr:
-        return None
-    params = {
-        "name": (t.name or "")[:64],
-        "address1": t.addr[:64],
-        "city": t.city or "New York",
-        "state": "NY",
-        "country": "US",
-        "match_threshold": "default",
-    }
-    if t.zip:
-        params["zip_code"] = str(t.zip)[:5]
-    r = sess.get(YELP_MATCH_URL, params=params, timeout=30)
-    r.raise_for_status()
-    for b in r.json().get("businesses", []):
-        if fuzz.token_set_ratio(name_key(t.name), name_key(b.get("name", ""))) >= _NAME_MIN:
-            return b.get("id")
-    return None
+def _best(cands: list, y_name: str) -> tuple[str | None, float | None]:
+    """cands: list of (src, id, name, dist) for one side. -> (id, score)."""
+    key = name_key(y_name)
+    best_id, best = None, 0.0
+    for _src, cid, cname, dist in cands:
+        sim = fuzz.token_set_ratio(key, name_key(cname))
+        score = sim - min(dist / 20.0, 15.0)
+        if sim >= _LINK_NAME_MIN and score > best:
+            best_id, best = cid, round(score, 1)
+    return best_id, (best or None)
 
 
-def _detail(sess, yelp_id: str) -> dict:
-    r = sess.get(f"{YELP_BUSINESS_URL}/{yelp_id}", timeout=30)
-    r.raise_for_status()
-    b = r.json()
-    return {
-        "yelp_id": b.get("id"),
-        "yelp_name": b.get("name"),
-        "is_closed": bool(b.get("is_closed")),
-        "rating": b.get("rating"),
-        "review_count": b.get("review_count"),
-        "url": (b.get("url") or "").split("?")[0] or None,
-    }
+def link() -> None:
+    setup()
+    with engine.connect() as conn:
+        rows_raw = conn.execute(_CAND_SQL, {"r": _LINK_RADIUS_M}).all()
+
+    by_yelp: dict[str, dict] = {}
+    for r in rows_raw:
+        d = by_yelp.setdefault(r.yelp_id, {"name": r.y_name, "overture": [], "dohmh": []})
+        d[r.src].append((r.src, r.cand_id, r.cand_name, r.dist_m))
+
+    rows = []
+    for yid, d in by_yelp.items():
+        oid, o_score = _best(d["overture"], d["name"])
+        camis, c_score = _best(d["dohmh"], d["name"])
+        if oid or camis:
+            rows.append(
+                {
+                    "yelp_id": yid,
+                    "overture_id": oid,
+                    "camis": camis,
+                    "overture_score": o_score,
+                    "camis_score": c_score,
+                }
+            )
+    with SessionLocal() as s, ingest_run(s, "yelp_link") as m:
+        s.execute(text("truncate yelp_matches"))
+        upsert(s, YelpMatch, rows, index_elements=["yelp_id"])
+        m.row_count = len(by_yelp)
+        m.kept_count = len(rows)
+        m.detail = {
+            "to_overture": sum(1 for r in rows if r["overture_id"]),
+            "to_dohmh": sum(1 for r in rows if r["camis"]),
+        }
+    log.info(
+        "link: %d Yelp businesses linked (%d→Overture, %d→DOHMH)",
+        len(rows),
+        sum(1 for r in rows if r["overture_id"]),
+        sum(1 for r in rows if r["camis"]),
+    )
 
 
-_EMPTY = {
-    "yelp_id": None,
-    "yelp_name": None,
-    "is_closed": None,
-    "rating": None,
-    "review_count": None,
-    "url": None,
-    "match_score": None,
-}
-
-
-def run(limit: int = 480, max_age_days: int = 30) -> None:
+def run(limit: int = 240, max_age_days: int = 14, rediscover: bool = False) -> None:
     setup()
     if not YELP_API_KEY:
         log.warning("YELP_API_KEY not set -- skipping Yelp ingest")
         return
-
-    with engine.connect() as conn:
-        targets = conn.execute(_TARGETS_SQL).all()
-        fresh = {
-            oid or camis
-            for oid, camis in conn.execute(
-                text(
-                    "select overture_id, camis from yelp_status "
-                    "where checked_at > now() - make_interval(days => :d)"
-                ),
-                {"d": max_age_days},
-            )
-        }
-
-    todo = [t for t in targets if t.key not in fresh][:limit]
-    log.info(
-        "%d targets, %d fresh, checking %d (cap %d, ~%d calls)",
-        len(targets),
-        len(fresh),
-        len(todo),
-        limit,
-        2 * len(todo),
+    with SessionLocal() as s:
+        prev = last_successful_run(s, "yelp_discover")
+    stale = (
+        rediscover
+        or prev is None
+        or (prev.finished_at and (datetime.now(UTC) - prev.finished_at).days >= max_age_days)
     )
-    if not todo:
-        return
-
-    sess = yelp_session()
-    rows, matched, closed, errors = [], 0, 0, 0
-    for i, t in enumerate(todo, 1):
-        base = {
-            "overture_id": t.key if t.src == "overture" else None,
-            "camis": t.key if t.src == "dohmh" else None,
-        }
-        try:
-            yid = _match(sess, t)
-            detail = _detail(sess, yid) if yid else dict(_EMPTY)
-        except Exception as exc:  # noqa: BLE001 -- record & continue
-            errors += 1
-            log.warning("%s %s: %s", t.src, t.key, exc)
-            continue
-        rows.append({**base, **detail, "match_score": None})
-        if detail["yelp_id"]:
-            matched += 1
-            closed += bool(detail["is_closed"])
-        if i % 100 == 0:
-            log.info("  %d/%d", i, len(todo))
-
-    log.info(
-        "checked %d: %d matched, %d flagged closed, %d errors", len(rows), matched, closed, errors
-    )
-    now = datetime.now(UTC)
-    for r in rows:
-        r["checked_at"] = now
-    with SessionLocal() as s, ingest_run(s, "yelp") as m:
-        upsert(s, YelpStatus, rows, index_elements=["overture_id", "camis"])
-        m.row_count = len(rows)
-        m.kept_count = matched
-        m.detail = {"closed": closed, "errors": errors, "fresh_skipped": len(fresh)}
-    log.info("yelp ingest complete")
+    if stale:
+        discover(limit)
+    else:
+        log.info("discovery is fresh (last run %s) -- skipping", prev.finished_at)
+    link()
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--limit", type=int, default=480, help="max targets (2 calls each)")
-    parser.add_argument(
-        "--max-age-days", type=int, default=30, help="re-check targets older than this"
-    )
+    parser.add_argument("--limit", type=int, default=240, help="max search calls for discovery")
+    parser.add_argument("--max-age-days", type=int, default=14)
+    parser.add_argument("--rediscover", action="store_true", help="force a fresh discovery sweep")
     args = parser.parse_args(argv)
-    run(limit=args.limit, max_age_days=args.max_age_days)
+    run(limit=args.limit, max_age_days=args.max_age_days, rediscover=args.rediscover)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 
   * reference       -- boroughs (seeded), ingest_runs (manifest)
   * raw ingest      -- overture_places, dohmh_establishments, dohmh_inspections
-  * linking         -- place_matches, yelp_status
+  * discovery       -- yelp_businesses (primary), overture_places, dohmh_*
+  * linking         -- place_matches, yelp_matches
   * derived         -- boba_shops
 
 `boba_shops` is truncated and rebuilt by boba/analyze.py from the raw + linking
@@ -231,7 +232,8 @@ class BobaShop(Base):
             name="date_order",
         ),
         CheckConstraint(
-            "identified_by in ('overture_category', 'name_pattern', 'both', 'propagated')",
+            "identified_by in "
+            "('yelp_category', 'overture_category', 'name_pattern', 'both', 'propagated')",
             name="identified_by",
         ),
         CheckConstraint(
@@ -255,6 +257,9 @@ class BobaShop(Base):
     camis: Mapped[str | None] = mapped_column(
         ForeignKey("dohmh_establishments.camis", ondelete="SET NULL"), index=True
     )
+    yelp_id: Mapped[str | None] = mapped_column(
+        ForeignKey("yelp_businesses.yelp_id", ondelete="SET NULL"), index=True
+    )
     geom: Mapped[object | None] = mapped_column(_point())
     borough: Mapped[str | None] = mapped_column(String, index=True)
     # earliest / latest evidence the shop existed (mostly DOHMH inspection dates)
@@ -272,30 +277,45 @@ class BobaShop(Base):
     )
 
 
-class YelpStatus(Base):
-    """Current open/closed for a shop from Yelp Fusion -- the corroboration DOHMH
-    can't give for Overture-only shops. Keyed by whichever id identifies the shop
-    (overture_id or camis, exactly one set). analyze.py left-joins on both."""
+class YelpBusiness(Base):
+    """NYC bubble-tea businesses enumerated from Yelp Fusion's ``bubbletea``
+    category -- the primary boba discovery source (Yelp curates the category by
+    hand). Carries current ``is_closed`` for free."""
 
-    __tablename__ = "yelp_status"
-    __table_args__ = (
-        UniqueConstraint(
-            "overture_id", "camis", name="uq_yelp_status_key", postgresql_nulls_not_distinct=True
-        ),
-    )
+    __tablename__ = "yelp_businesses"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    overture_id: Mapped[str | None] = mapped_column(
-        ForeignKey("overture_places.id", ondelete="CASCADE"), index=True
-    )
-    camis: Mapped[str | None] = mapped_column(
-        ForeignKey("dohmh_establishments.camis", ondelete="CASCADE"), index=True
-    )
-    yelp_id: Mapped[str | None] = mapped_column(String)  # null == searched, no match
-    yelp_name: Mapped[str | None] = mapped_column(String)
+    yelp_id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str | None] = mapped_column(String, index=True)
     is_closed: Mapped[bool | None] = mapped_column(Boolean)
     rating: Mapped[float | None] = mapped_column(Float)
     review_count: Mapped[int | None] = mapped_column(Integer)
+    price: Mapped[str | None] = mapped_column(String)
+    phone: Mapped[str | None] = mapped_column(String)
     url: Mapped[str | None] = mapped_column(String)
-    match_score: Mapped[float | None] = mapped_column(Float)
+    categories: Mapped[dict | None] = mapped_column(JSONB)  # [{alias, title}, ...]
+    address: Mapped[str | None] = mapped_column(String)
+    city: Mapped[str | None] = mapped_column(String)
+    zip: Mapped[str | None] = mapped_column(String)
+    geom: Mapped[object] = mapped_column(_point(nullable=False))
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class YelpMatch(Base):
+    """One row per Yelp business: its best-matching Overture place and/or CAMIS."""
+
+    __tablename__ = "yelp_matches"
+    __table_args__ = (UniqueConstraint("yelp_id", name="uq_yelp_matches_yelp_id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    yelp_id: Mapped[str] = mapped_column(
+        ForeignKey("yelp_businesses.yelp_id", ondelete="CASCADE"), index=True
+    )
+    overture_id: Mapped[str | None] = mapped_column(
+        ForeignKey("overture_places.id", ondelete="SET NULL"), index=True
+    )
+    camis: Mapped[str | None] = mapped_column(
+        ForeignKey("dohmh_establishments.camis", ondelete="SET NULL"), index=True
+    )
+    overture_score: Mapped[float | None] = mapped_column(Float)
+    camis_score: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

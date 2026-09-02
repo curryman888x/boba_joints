@@ -167,6 +167,54 @@ def parse_overture_place(raw: Mapping[str, Any]) -> OverturePlaceRecord:
         raise ContractViolation(str(exc)) from exc
 
 
+# --- Yelp business record ---------------------------------------------
+
+
+class YelpBusinessRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    yelp_id: str
+    name: str | None = None
+    is_closed: bool | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    price: str | None = None
+    phone: str | None = None
+    url: str | None = None
+    categories: list[dict] = Field(default_factory=list)
+    address: str | None = None
+    city: str | None = None
+    zip: str | None = None
+    lon: float
+    lat: float
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+        d = {k: (None if _is_missing(v) else v) for k, v in dict(data).items()}
+        d["yelp_id"] = d.get("id")
+        coords = _as_dict(d.get("coordinates"))
+        d["lon"], d["lat"] = coords.get("longitude"), coords.get("latitude")
+        loc = _as_dict(d.get("location"))
+        d["address"] = loc.get("address1")
+        d["city"] = loc.get("city")
+        d["zip"] = loc.get("zip_code")
+        cats = _as_list(d.get("categories"))
+        d["categories"] = [c for c in cats if isinstance(c, Mapping)]
+        if d.get("url"):
+            d["url"] = str(d["url"]).split("?")[0]
+        return d
+
+
+def parse_yelp_business(raw: Mapping[str, Any]) -> YelpBusinessRecord:
+    try:
+        return YelpBusinessRecord.model_validate(raw)
+    except ValidationError as exc:
+        raise ContractViolation(str(exc)) from exc
+
+
 # --- DOHMH inspection frame ---------------------------------------------
 
 KNOWN_DOHMH_ACTIONS = frozenset(

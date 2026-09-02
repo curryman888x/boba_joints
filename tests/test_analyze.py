@@ -16,7 +16,6 @@ def est(**kw):
         closed_date=None,
         reopened_date=None,
         boba_name_match=False,
-        yelp_is_closed=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -30,8 +29,13 @@ def ov(**kw):
         last_seen_release=None,
         is_bubble_tea=False,
         name=None,
-        yelp_is_closed=None,
     )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def yb(**kw):
+    base = dict(name=None, yelp_is_closed=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -56,7 +60,7 @@ def test_first_seen_uses_overture_release_only_across_two_ingests():
 
 def test_closed_dohmh_forced_closure():
     d = dt.date(2025, 2, 3)
-    assert _closed(est(closed_flag=True, closed_date=d), ov(), TODAY) == (
+    assert _closed(est(closed_flag=True, closed_date=d), ov(), None, TODAY) == (
         d,
         "dohmh_closed_by_dohmh",
         "closed",
@@ -71,22 +75,22 @@ def test_closed_reopened_is_not_closed():
         reopened_date=dt.date(2024, 3, 1),
         last_inspection_date=dt.date(2026, 6, 1),
     )
-    assert _closed(e, ov(), TODAY)[2] == "open"
+    assert _closed(e, ov(), None, TODAY)[2] == "open"
 
 
 def test_recent_inspection_is_open_dohmh_active():
     e = est(last_inspection_date=dt.date(2026, 6, 1))
-    assert _closed(e, ov(), TODAY) == (None, None, "open", "dohmh_active")
+    assert _closed(e, ov(), None, TODAY) == (None, None, "open", "dohmh_active")
 
 
 def test_long_silence_is_closed_inactive():
     e = est(last_inspection_date=dt.date(2024, 1, 1))
-    d, src, status, basis = _closed(e, ov(), TODAY)
+    d, src, status, basis = _closed(e, ov(), None, TODAY)
     assert (status, basis, src) == ("closed", "dohmh_inactive", "dohmh_inactive")
 
 
 def test_overture_open_is_low_trust_basis():
-    assert _closed(None, ov(operating_status="open"), TODAY) == (
+    assert _closed(None, ov(operating_status="open"), None, TODAY) == (
         None,
         None,
         "open",
@@ -95,22 +99,22 @@ def test_overture_open_is_low_trust_basis():
 
 
 def test_no_signal_is_unknown_not_open():
-    assert _closed(None, ov(operating_status=None), TODAY) == (None, None, "unknown", "none")
+    assert _closed(None, ov(operating_status=None), None, TODAY) == (None, None, "unknown", "none")
 
 
 def test_overture_permanently_closed():
     o = ov(operating_status="permanently_closed", source_update_time=dt.datetime(2026, 8, 14))
-    assert _closed(None, o, TODAY)[2:] == ("closed", "overture_permanently_closed")
+    assert _closed(None, o, None, TODAY)[2:] == ("closed", "overture_permanently_closed")
 
 
 def test_yelp_closed_beats_a_recent_inspection():
-    e = est(last_inspection_date=dt.date(2026, 6, 1), yelp_is_closed=True)
-    assert _closed(e, ov(), TODAY)[2:] == ("closed", "yelp_closed")
+    e = est(last_inspection_date=dt.date(2026, 6, 1))
+    assert _closed(e, ov(), yb(yelp_is_closed=True), TODAY)[2:] == ("closed", "yelp_closed")
 
 
 def test_yelp_open_outranks_overture_open():
-    o = ov(operating_status="open", yelp_is_closed=False)
-    assert _closed(None, o, TODAY)[2:] == ("open", "yelp_open")
+    o = ov(operating_status="open")
+    assert _closed(None, o, yb(yelp_is_closed=False), TODAY)[2:] == ("open", "yelp_open")
 
 
 # --- _identified_by ----------------------------------------------
@@ -118,13 +122,17 @@ def test_yelp_open_outranks_overture_open():
 
 def test_identified_by_precedence():
     assert (
-        _identified_by(ov(is_bubble_tea=True, name="Gong Cha"), est(boba_name_match=True)) == "both"
+        _identified_by(None, ov(is_bubble_tea=True, name="Gong Cha"), est(boba_name_match=True))
+        == "both"
     )
-    assert _identified_by(ov(is_bubble_tea=True, name="Random Deli"), None) == "overture_category"
-    assert _identified_by(ov(is_bubble_tea=False, name="Kung Fu Tea"), None) == "name_pattern"
-    assert _identified_by(None, est(boba_name_match=True)) == "name_pattern"
     assert (
-        _identified_by(ov(is_bubble_tea=False, name="Joe's"), est(boba_name_match=False))
+        _identified_by(None, ov(is_bubble_tea=True, name="Random Deli"), None)
+        == "overture_category"
+    )
+    assert _identified_by(None, ov(is_bubble_tea=False, name="Kung Fu Tea"), None) == "name_pattern"
+    assert _identified_by(None, None, est(boba_name_match=True)) == "name_pattern"
+    assert (
+        _identified_by(None, ov(is_bubble_tea=False, name="Joe's"), est(boba_name_match=False))
         == "propagated"
     )
 
@@ -141,6 +149,7 @@ def _shop(name, lon, lat, camis=None, status="open", first_seen=None, oid="x"):
         "status": status,
         "first_seen_date": first_seen,
         "overture_id": oid,
+        "yelp_id": None,
     }
 
 

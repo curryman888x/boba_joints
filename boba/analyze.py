@@ -1,10 +1,11 @@
-"""Build the canonical boba-shop list and the opened/closed timeline.
+"""Build the canonical boba-shop list.
 
-One ``boba_shops`` row per real-world shop, from three populations:
+One ``boba_shops`` row per real-world shop, seeded from three populations
+(Yelp first -- its ``bubbletea`` category is the best discovery signal):
 
-* Overture boba place + its matched CAMIS  (merged)
-* Overture boba place with no CAMIS         (Overture-only)
-* boba CAMIS (name-matched OR label-propagated) with no Overture match (DOHMH-only)
+* a Yelp business, + its linked Overture place (brand/geom) and CAMIS (dates)
+* an Overture ``bubble_tea`` place not in Yelp, + its matched CAMIS
+* a boba-name CAMIS not in Yelp or Overture
 
 first_seen_date / last_seen_date are *evidence bounds* (mostly DOHMH inspection
 dates), not lifecycle events; closed_date is set only on a real closure signal.
@@ -33,27 +34,32 @@ log = get_logger("boba.analyze")
 SINCE_YEAR = 2022  # DOHMH inspection history floor; nothing credible before this
 INACTIVE_DAYS = 550  # no inspection in ~18 months + not force-closed => likely closed
 
-# CAMIS that are boba: name-matched OR linked to an Overture boba place (propagation)
+# CAMIS in play: name-matched, or linked to an Overture / Yelp boba entity
 _BOBA_CAMIS = """
     select camis from dohmh_establishments where boba_name_match
-    union
-    select camis from place_matches
+    union select camis from place_matches
+    union select camis from yelp_matches where camis is not null
 """
 
-# highest-scoring match per CAMIS, for the DOHMH-only / merged join
+_YELP = """
+    select y.yelp_id, y.name, y.is_closed as yelp_is_closed, y.rating, y.review_count,
+           st_x(y.geom) lon, st_y(y.geom) lat,
+           ym.overture_id, ym.camis
+    from yelp_businesses y
+    left join yelp_matches ym on ym.yelp_id = y.yelp_id
+"""
+
 _ESTABLISHMENTS = f"""
     select e.camis, e.dba, e.boro, e.boba_name_match,
            e.first_inspection_date, e.last_inspection_date,
            e.closed_flag, e.closed_date, e.reopened_date,
            st_x(e.geom) lon, st_y(e.geom) lat,
-           m.overture_id, m.score,
-           y.is_closed as yelp_is_closed
+           m.overture_id, m.score
     from dohmh_establishments e
     left join lateral (
         select overture_id, score from place_matches pm
         where pm.camis = e.camis order by score desc limit 1
     ) m on true
-    left join yelp_status y on y.camis = e.camis
     where e.camis in ({_BOBA_CAMIS})
 """
 
@@ -62,14 +68,12 @@ _OVERTURE = """
            o.source_update_time, o.first_seen_release, o.last_seen_release,
            jsonb_exists(o.categories -> 'all', 'bubble_tea') as is_bubble_tea,
            st_x(o.geom) lon, st_y(o.geom) lat,
-           m.camis,
-           y.is_closed as yelp_is_closed
+           m.camis
     from overture_places o
     left join lateral (
         select camis, score from place_matches pm
         where pm.overture_id = o.id order by score desc limit 1
     ) m on true
-    left join yelp_status y on y.overture_id = o.id
 """
 
 # DOHMH `boro` fallback (used only when a point sits just outside the polygons,
@@ -169,17 +173,9 @@ def _last_seen(est, ov) -> dt.date | None:
     return max(cands) if cands else None
 
 
-def _yelp_is_closed(est, ov):
-    for o in (est, ov):
-        v = getattr(o, "yelp_is_closed", None) if o is not None else None
-        if v is not None and pd.notna(v):
-            return bool(v)
-    return None
-
-
-def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str, str]:
-    """-> (closed_date, closed_source, status, status_basis)."""
-    yelp = _yelp_is_closed(est, ov)
+def _closed(est, ov, yb, today) -> tuple[dt.date | None, str | None, str, str]:
+    """-> (closed_date, closed_source, status, status_basis). yb = Yelp row or None."""
+    yelp = bool(yb.yelp_is_closed) if yb is not None and pd.notna(yb.yelp_is_closed) else None
     # --- closure signals, strongest first ---
     if est is not None and est.closed_flag and pd.notna(est.closed_date):
         reopened = pd.notna(est.reopened_date) and est.reopened_date >= est.closed_date
@@ -203,7 +199,9 @@ def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str, str]:
     return None, None, "unknown", "none"
 
 
-def _identified_by(ov, est) -> str:
+def _identified_by(yb, ov, est) -> str:
+    if yb is not None:
+        return "yelp_category"  # Yelp's curated bubbletea category -- our best signal
     has_cat = ov is not None and bool(ov.is_bubble_tea)
     has_name = (ov is not None and name_looks_like_boba(ov.name)) or (
         est is not None and bool(est.boba_name_match)
@@ -217,10 +215,10 @@ def _identified_by(ov, est) -> str:
     return "propagated"  # DOHMH establishment labelled boba only via a spatial match
 
 
-def _dates(est, ov, today):
+def _dates(est, ov, yb, today):
     first_d, first_src = _first_seen(est, ov)
     last_d = _last_seen(est, ov)
-    closed_d, closed_src, status, basis = _closed(est, ov, today)
+    closed_d, closed_src, status, basis = _closed(est, ov, yb, today)
     if first_d and closed_d and first_d > closed_d:  # contradiction -> drop the weaker
         first_d, first_src = None, None
     return first_d, first_src, last_d, closed_d, closed_src, status, basis
@@ -233,16 +231,31 @@ def _coord(*vals):
     return None
 
 
-def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
-    first_d, first_src, last_d, c_d, c_s, status, basis = _dates(est, ov, today)
+def _shop(*, est, ov, yb, today) -> dict:
+    first_d, first_src, last_d, c_d, c_s, status, basis = _dates(est, ov, yb, today)
+    name = (
+        (yb.name if yb is not None else None)
+        or (ov.name if ov is not None else None)
+        or (est.dba if est is not None else None)
+    )
     return {
         "name": name,
-        "overture_id": oid,
-        "camis": camis,
-        "lon": lon,
-        "lat": lat,
+        "overture_id": ov.Index if ov is not None else None,
+        "camis": est.Index if est is not None else None,
+        "yelp_id": yb.yelp_id if yb is not None else None,
+        # geometry: Overture is most precise, then Yelp, then DOHMH
+        "lon": _coord(
+            ov.lon if ov is not None else None,
+            yb.lon if yb is not None else None,
+            est.lon if est is not None else None,
+        ),
+        "lat": _coord(
+            ov.lat if ov is not None else None,
+            yb.lat if yb is not None else None,
+            est.lat if est is not None else None,
+        ),
         "borough": None,  # set by _assign_boroughs
-        "_dohmh_boro": dohmh_boro,
+        "_dohmh_boro": est.boro if est is not None else None,
         "first_seen_date": first_d,
         "first_seen_source": first_src,
         "last_seen_date": last_d,
@@ -250,7 +263,7 @@ def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
         "closed_source": c_s,
         "status": status,
         "status_basis": basis,
-        "identified_by": _identified_by(ov, est),
+        "identified_by": _identified_by(yb, ov, est),
     }
 
 
@@ -265,6 +278,7 @@ def _dedup(shops: list[dict]) -> list[dict]:
     def richness(s: dict) -> tuple:
         return (
             s["camis"] is not None,
+            s["yelp_id"] is not None,
             s["status"] != "unknown",
             s["first_seen_date"] is not None,
             s["overture_id"] is not None,
@@ -289,10 +303,8 @@ def _dedup(shops: list[dict]) -> list[dict]:
                     cluster.append(b)
                     used[j] = True
             best = max(cluster, key=richness)
-            best["overture_id"] = best["overture_id"] or next(
-                (c["overture_id"] for c in cluster if c["overture_id"]), None
-            )
-            best["camis"] = best["camis"] or next((c["camis"] for c in cluster if c["camis"]), None)
+            for k in ("overture_id", "camis", "yelp_id"):
+                best[k] = best[k] or next((c[k] for c in cluster if c[k]), None)
             kept.append(best)
             dropped += len(cluster) - 1
     if dropped:
@@ -310,64 +322,58 @@ def _haversine_m(lon1, lat1, lon2, lat2) -> float:
 
 def run(since_year: int = SINCE_YEAR) -> None:
     setup()
+    yelp_df = pd.read_sql(text(_YELP), engine)
     est_df = pd.read_sql(text(_ESTABLISHMENTS), engine).set_index("camis")
     ov_df = pd.read_sql(text(_OVERTURE), engine).set_index("overture_id")
     today = dt.date.today()
 
+    ov_by_id = {r.Index: r for r in ov_df.itertuples(name="Ov")}
+    est_by_camis = {r.Index: r for r in est_df.itertuples(name="Est")}
+    ov_used: set[str] = set()
     est_used: set[str] = set()
     shops: list[dict] = []
+    n_yelp = n_ov = n_dohmh = 0
 
-    # merged (Overture place + matched CAMIS) and Overture-only
-    for oid, ov in zip(ov_df.index, ov_df.itertuples(index=False, name="Ov"), strict=True):
-        est = est_df.loc[ov.camis] if ov.camis in est_df.index else None
+    # 1. Yelp businesses (primary discovery)
+    for yb in yelp_df.itertuples(index=False, name="Y"):
+        ov = ov_by_id.get(yb.overture_id) if isinstance(yb.overture_id, str) else None
+        est = est_by_camis.get(yb.camis) if isinstance(yb.camis, str) else None
+        if ov is not None:
+            ov_used.add(ov.Index)
         if est is not None:
-            est_used.add(ov.camis)
-        shops.append(
-            _shop(
-                name=ov.name or (est.dba if est is not None else None),
-                oid=oid,
-                camis=ov.camis if isinstance(ov.camis, str) else None,
-                lon=_coord(ov.lon, est.lon if est is not None else None),
-                lat=_coord(ov.lat, est.lat if est is not None else None),
-                dohmh_boro=est.boro if est is not None else None,
-                est=est,
-                ov=ov,
-                today=today,
-            )
-        )
+            est_used.add(est.Index)
+        shops.append(_shop(est=est, ov=ov, yb=yb, today=today))
+        n_yelp += 1
 
-    # DOHMH-only boba CAMIS with no Overture match
-    for camis, est in zip(est_df.index, est_df.itertuples(index=False, name="Est"), strict=True):
-        if camis in est_used:
+    # 2. Overture bubble_tea / name places not already seeded via Yelp
+    for ov in ov_by_id.values():
+        if ov.Index in ov_used:
             continue
-        shops.append(
-            _shop(
-                name=est.dba,
-                oid=est.overture_id if isinstance(est.overture_id, str) else None,
-                camis=camis,
-                lon=_coord(est.lon),
-                lat=_coord(est.lat),
-                dohmh_boro=est.boro,
-                est=est,
-                ov=None,
-                today=today,
-            )
-        )
+        if not (bool(ov.is_bubble_tea) or name_looks_like_boba(ov.name)):
+            continue
+        est = est_by_camis.get(ov.camis) if isinstance(ov.camis, str) else None
+        if est is not None:
+            est_used.add(est.Index)
+        shops.append(_shop(est=est, ov=ov, yb=None, today=today))
+        n_ov += 1
+
+    # 3. boba-name CAMIS not already seeded
+    for est in est_by_camis.values():
+        if est.Index in est_used or not bool(est.boba_name_match):
+            continue
+        shops.append(_shop(est=est, ov=None, yb=None, today=today))
+        n_dohmh += 1
 
     shops = _assign_boroughs(shops)
     shops = _dedup(shops)
 
-    merged = sum(1 for s in shops if s["overture_id"] and s["camis"])
-    ov_only = sum(1 for s in shops if s["overture_id"] and not s["camis"])
-    dohmh_only = sum(1 for s in shops if s["camis"] and not s["overture_id"])
-    by_id = Counter(s["identified_by"] for s in shops)
-    log.info("identified_by: %s", dict(by_id))
+    log.info("identified_by: %s", dict(Counter(s["identified_by"] for s in shops)))
     log.info(
-        "%d boba shops (%d merged, %d Overture-only, %d DOHMH-only)",
+        "%d boba shops (seeds: %d Yelp, %d Overture-only, %d DOHMH-only)",
         len(shops),
-        merged,
-        ov_only,
-        dohmh_only,
+        n_yelp,
+        n_ov,
+        n_dohmh,
     )
     _write(shops, since_year, today)
 
@@ -390,6 +396,7 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
                     name=r["name"],
                     overture_id=r["overture_id"],
                     camis=r["camis"],
+                    yelp_id=r["yelp_id"],
                     geom=geom,
                     borough=r["borough"],
                     first_seen_date=r["first_seen_date"],
