@@ -17,7 +17,8 @@ SINCE = 2022
 
 STATUS_COLOR = {"open": "#26a69a", "closed": "#e57373", "unknown": "#b0bec5"}
 KIND_COLOR = {"first seen": "#26a69a", "closed": "#e57373"}
-ALL_IDENT = ["overture_category", "both", "name_pattern", "propagated"]
+ALL_IDENT = ["yelp_category", "overture_category", "both", "name_pattern", "propagated"]
+VERIFIED = ["dohmh_active", "yelp_open"]
 
 
 @st.cache_data(ttl=300)
@@ -31,12 +32,15 @@ def load_shops() -> pd.DataFrame:
                    o.brand,
                    coalesce(
                        o.addr_freeform,
-                       nullif(trim(concat_ws(' ', e.building, e.street)), '')
+                       nullif(trim(concat_ws(' ', e.building, e.street)), ''),
+                       y.address
                    ) as address,
+                   y.rating as yelp_rating, y.review_count as yelp_reviews, y.url as yelp_url,
                    st_x(s.geom) as lon, st_y(s.geom) as lat
             from boba_shops s
             left join overture_places o      on o.id = s.overture_id
             left join dohmh_establishments e on e.camis = s.camis
+            left join yelp_businesses y      on y.yelp_id = s.yelp_id
             """
         ),
         engine,
@@ -90,7 +94,7 @@ f = shops[
 if f_brand:
     f = f[f["brand"].isin(f_brand)]
 if f_verified:
-    f = f[(f["status"] != "open") | (f["status_basis"].isin(["dohmh_active", "yelp_open"]))]
+    f = f[(f["status"] != "open") | (f["status_basis"].isin(VERIFIED))]
 
 fs = f.dropna(subset=["first_seen_date"])
 cl = f[(f["status"] == "closed") & f["closed_date"].notna()]
@@ -104,12 +108,13 @@ DATE_COLS = {
 # --- header + KPIs --------------------------------------------------
 st.title("🧋 NYC boba joints — 2022–2026")
 st.caption(
-    "Overture Places (boba label + location) joined to NYC DOHMH inspections and Yelp. "
+    "Yelp's curated `bubbletea` category is the primary shop list; Overture supplies "
+    "brand/geometry and NYC DOHMH inspections supply the timeline. "
     "Counts are a **lower bound**; **dates are evidence bounds, not lifecycle events** "
     "(see below)."
 )
 opn = f["status"] == "open"
-verified = opn & f["status_basis"].isin(["dohmh_active", "yelp_open"])
+verified = opn & f["status_basis"].isin(VERIFIED)
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Boba shops", len(f))
 k2.metric("Open · verified", int(verified.sum()))
@@ -279,6 +284,8 @@ with tab_tbl:
         "closed_date",
         "closed_source",
         "identified_by",
+        "yelp_rating",
+        "yelp_reviews",
     ]
     view = f[cols].sort_values("first_seen_date", ascending=False, na_position="last")
     st.dataframe(view, width="stretch", hide_index=True, column_config=DATE_COLS)
@@ -297,7 +304,8 @@ with tab_dq:
             width="stretch",
         )
         st.caption(
-            "`overture_category` / `both` rest on Overture's curated `bubble_tea` tag; "
+            "`yelp_category` is Yelp's curated `bubbletea` tag (primary source); "
+            "`overture_category` / `both` rest on Overture's `bubble_tea` tag; "
             "`name_pattern` is regex-only; `propagated` is pure spatial inference."
         )
     with c2:

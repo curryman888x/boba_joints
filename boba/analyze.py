@@ -436,10 +436,12 @@ def _summary(df: pd.DataFrame, since_year: int, today: dt.date) -> None:
     for y in years:
         log.info("%d   %9d  %6d", y, fs[y], cl[y])
     opn = d["status"] == "open"
+    verified = opn & d["status_basis"].isin(["dohmh_active", "yelp_open"])
     log.info(
-        "currently: %d open (%d DOHMH-verified, %d Overture's word only), %d closed, %d unknown",
+        "currently: %d open (%d verified by DOHMH/Yelp, %d Overture's word only), "
+        "%d closed, %d unknown",
         opn.sum(),
-        (opn & (d["status_basis"] == "dohmh_active")).sum(),
+        verified.sum(),
         (opn & (d["status_basis"] == "overture_open")).sum(),
         (d["status"] == "closed").sum(),
         (d["status"] == "unknown").sum(),

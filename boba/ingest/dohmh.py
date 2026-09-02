@@ -8,8 +8,9 @@ frame is validated (``validate_dohmh_frame``) and tightened. We load:
   inspection row, derived fields (first/last inspection, closed/reopened,
   boba_name_match) recomputed in SQL from whatever inspections are loaded.
 
-Runs are incremental after the first: only rows with ``record_date`` newer than
-the last successful run's ``max_date`` are pulled.
+Always a full pull: ``record_date`` is a per-publish dataset timestamp (~uniform
+across rows) so it can't drive a row-level cursor; the candidate set is small
+(~28k rows) and upserts dedupe.
 """
 
 from __future__ import annotations
@@ -231,14 +232,11 @@ _RECOMPUTE_SQL = text(
 )
 
 
-def run(refresh: bool = False) -> None:
+def run() -> None:
     setup()
     with SessionLocal() as s:
         prev = last_successful_run(s, "dohmh")
 
-    # `record_date` is a per-publish dataset timestamp, ~uniform across rows, so
-    # it can't drive a row-level incremental cursor. The candidate set is small
-    # (~28k rows / ~15s) -- always full-pull; upserts dedupe.
     raw = _fetch(_where())
     if raw.empty:
         raise ContractViolation("DOHMH Socrata pull returned nothing")
@@ -295,12 +293,8 @@ def run(refresh: bool = False) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--refresh", action="store_true", help="full re-pull, ignore the incremental cursor"
-    )
-    args = parser.parse_args(argv)
-    run(refresh=args.refresh)
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    run()
 
 
 if __name__ == "__main__":

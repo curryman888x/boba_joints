@@ -1,56 +1,64 @@
-# Data sources — why three, and why matching
+# Data sources — Yelp discovers, Overture + DOHMH enrich
 
 ## The question
 
 "Which NYC boba shops opened or closed, and roughly when?"
 
 Answering it needs: **a boba label**, **a location**, **a rough timeline**, and
-**a current-status check**. No single free source has all of it.
+**a current-status check**. No single free source has all of it — but Yelp
+covers the first, second and fourth well enough to be the spine.
 
 ## What each source has
 
-| Need | Overture Maps Places | NYC DOHMH inspections | Yelp Fusion |
+| Need | Yelp Fusion (`bubbletea`) | Overture Maps Places | NYC DOHMH inspections |
 |---|---|---|---|
-| Is it a boba shop? | ✅ `bubble_tea` category — a real, curated tag | ⚠️ no such cuisine; name-guess `dba` | ✅ `bubbletea` category (used only to confirm a match) |
-| Location / brand | ✅ precise point, address, brand + Wikidata | ⚠️ lat/long (≈99% filled), no brand | ✅ address, coords |
-| **Opening / closing date** | ❌ none | ⚠️ **no such field** — first *inspection* ≈ "operating by" (permit lag), silence ≈ closed | ❌ none |
-| Currently open? | ⚠️ `operating_status` — lags real closures | ⚠️ trailing (inspected within ~18 mo) | ✅ `is_closed` — current, purpose-built |
-| History before mid-2023 | ❌ first release July 2023 | ✅ inspections to ~2016 (≈2022 for boba names) | ✅ keeps closed listings |
+| Is it a boba shop? | ✅ **hand-curated `bubbletea` category** — the primary discovery signal | ✅ `bubble_tea` category — curated, but misses ~200 Yelp has | ⚠️ no such cuisine; name-guess on `dba` |
+| Location | ✅ point + address | ✅ precise point, address | ⚠️ lat/long (~99% filled) |
+| Brand | ⚠️ name only | ✅ brand + Wikidata id | ❌ none |
+| **Opening / closing date** | ❌ none | ❌ none | ⚠️ **no such field** — first *inspection* ≈ "operating by" (permit lag), silence ≈ closed |
+| Currently open? | ✅ `is_closed` — current, purpose-built, free with discovery | ⚠️ `operating_status` — lags real closures | ⚠️ trailing (inspected within ~18 mo) |
+| History before mid-2023 | ⚠️ keeps closed listings, no dates | ❌ first release July 2023 | ✅ inspections to ~2016 (~2022 for boba names) |
 
-**Overture** is a snapshot: it labels and locates shops but has no time axis, and
-its `operating_status` is unreliable (it said "open" for Come Buy, which is
-closed).
+**Yelp** is the shop list. `discover()` searches the `bubbletea` category over an
+adaptive NYC grid (subdividing any tile that hits Yelp's 240-result ceiling),
+keeps a business only if `bubbletea` is its *primary* category — dropping ~260
+restaurants that merely serve boba — and gets `is_closed` for free. ~446 NYC
+businesses.
 
-**DOHMH** is the closest thing to a timeline — but it's *inspection* data. First
-inspection lags the true opening by the permit gap; closure is inferred from
-18 months of silence. Directionally right, ±1 quarter. It's also the only source
-that sees shops which closed before Overture existed.
+**Overture** adds brand + a more precise geometry when a Yelp business links to
+one, and contributes ~200 shops Yelp doesn't list (its own `bubble_tea` tag, or a
+name match). No time axis; `operating_status` is unreliable (it said "open" for
+Come Buy, which is closed).
 
-**Yelp** answers "is it open *now*" for the ~194 shops resting only on Overture's
-word — matched by name + address (`/businesses/matches`).
+**DOHMH** is the only timeline. First inspection lags the true opening by the
+permit gap; closure is inferred from ~18 months of silence. Directionally right,
+±1 quarter. It's also the only source that sees shops which closed before Yelp or
+Overture would help.
 
-## Why we match
+## Why we still match
 
-Matching glues Overture's "this is a boba shop, here, this brand" onto DOHMH's
-"first inspected 2023‑04, last 2025‑01" and Yelp's "still open", for the *same
-physical shop*. See [methodology.md](methodology.md).
+Yelp gives "this is a boba shop, here, open/closed". Matching glues on Overture's
+brand and DOHMH's "first inspected 2023‑04, last 2025‑01" for the *same physical
+shop* — `ingest/yelp.py::link` by name + distance, `match.py` for Overture↔DOHMH.
+See [methodology.md](methodology.md).
 
-## The three populations of `boba_shops`
+## How `boba_shops` is seeded (~655 total, after dedup)
 
-| Population | Count | What it means |
+`analyze.py` walks three populations in order; each only *adds* rows:
+
+| Seed | Count | What it means |
 |---|---|---|
-| **merged** | ~169 | in both sources — best case: clean label + a first-seen date |
-| **Overture-only** | ~266 | Overture has it, no DOHMH match — too new to have been inspected, name too different, or outside our DOHMH net. Known to exist; no first-seen date. |
-| **DOHMH-only** | ~77 | a boba CAMIS with no Overture point — often a shop that **closed before Overture existed**. Why DOHMH is load-bearing, not a mere date lookup. |
+| **Yelp business** | ~446 | the primary list. ~240 link to an Overture place and/or a CAMIS; ~206 are Yelp-only (too new / not in the others) |
+| **Overture-only** | ~275 → adds the ones not already seeded via Yelp | an Overture `bubble_tea` (or name-match) place with no Yelp business — Yelp's grid missed it, or the name/category disagree |
+| **DOHMH-only** | ~50 | a boba-name (or spatially-propagated) CAMIS with no Yelp or Overture entity — often a shop that **closed before the others existed** |
 
-(~512 total, after dedup. Borough is a point-in-polygon against NYC's official
-boundaries; shops outside the five boroughs — the bbox rectangle clips Nassau /
-Westchester — are dropped, ~14. Duplicate Overture GERS ids for one shop
-collapse if same-name within 60 m, ~12.)
+Borough is a point-in-polygon against NYC's official boundaries; shops outside
+the five boroughs (the Yelp lat/lon search and the Overture bbox both pull in
+Nassau / Westchester / NJ) are dropped, ~100. Duplicate rows for one shop
+(same normalised name within 60 m) collapse, keeping the richest.
 
-## The hard constraint: 2022–2026
+## Coverage: 2022–2026
 
-Neither source reaches 2020–2021. Overture starts July 2023; DOHMH's
-boba‑name records start 2022‑01‑25. The deliverable is scoped to **2022 → 2026**;
-earlier openings/closings are an acknowledged gap (would need a paid source like
-SafeGraph/Advan, or a curated historical list).
+DOHMH's boba‑name inspection records start 2022‑01‑25 and Overture's first
+release is July 2023; Yelp has no dates at all. So the timeline covers
+**2022 → 2026** and doesn't reach earlier.

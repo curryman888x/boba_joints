@@ -1,1 +1,1 @@
-"""boba_joints: tracking NYC boba shop openings and closings since 2020."""
+"""boba_joints: NYC boba shops 2022-2026 -- discovery, timeline, current status."""

@@ -18,6 +18,10 @@
 # **sampling and hand-labelling**. Each section: generate a CSV, you fill the
 # blank column, re-run the recompute cell.
 #
+# Discovery is Yelp's `bubbletea` category first, then Overture's `bubble_tea`
+# tag, then a name regex on Overture / DOHMH. **Section 0** shows how much each
+# source contributes; sections 1-3 probe recall and precision of the tail.
+#
 # The provisional numbers below use a rough auto-label so there's something to
 # look at immediately -- **replace them by editing `data/*.csv` and re-running.**
 
@@ -49,6 +53,43 @@ _NAME_RE = re.compile(BOBA_NAME_PATTERN)
 
 SAMPLE_N = 60
 RANDOM_STATE = 7
+
+# %% [markdown]
+# ## 0. Source overlap — who finds what
+#
+# Each `boba_shops` row carries `identified_by` (how it entered the set) and which
+# source ids it resolved to. This is the live "recall" picture now that Yelp is
+# primary: how many shops would we lose without each source.
+
+# %%
+overlap = pd.read_sql(
+    text(
+        """
+        select identified_by,
+               count(*)                                              as shops,
+               count(*) filter (where yelp_id  is not null)          as has_yelp,
+               count(*) filter (where overture_id is not null)       as has_overture,
+               count(*) filter (where camis    is not null)          as has_dohmh,
+               count(*) filter (where first_seen_date is not null)   as has_date
+        from boba_shops
+        group by identified_by
+        order by shops desc
+        """
+    ),
+    engine,
+)
+print(overlap.to_string(index=False))
+print(f"\ntotal shops: {overlap['shops'].sum()}")
+print(
+    "Yelp-only (no Overture, no CAMIS):",
+    pd.read_sql(
+        text(
+            "select count(*) from boba_shops "
+            "where yelp_id is not null and overture_id is null and camis is null"
+        ),
+        engine,
+    ).iat[0, 0],
+)
 
 # %% [markdown]
 # ## 1. Recall — do we catch the boba shops in DOHMH's Coffee/Tea universe?
@@ -174,8 +215,10 @@ if (r["ok"] == "n").any():
 # %% [markdown]
 # ## 3. Precision of the boba set itself
 #
-# Overture-category shops can be mis-tagged (a burger place tagged `bubble_tea`);
-# name-pattern shops can be regex false positives. Fill `is_boba` (y/n).
+# The non-Yelp tail is the risky part: Overture-category shops can be mis-tagged
+# (a burger place tagged `bubble_tea`); name-pattern shops can be regex false
+# positives. `yelp_category` is excluded here -- Yelp's curation is the baseline
+# we're comparing against. Fill `is_boba` (y/n).
 
 # %%
 shops = pd.read_sql(
@@ -183,7 +226,7 @@ shops = pd.read_sql(
         """
         select id, name, borough, identified_by, status
         from boba_shops
-        where identified_by in ('overture_category', 'name_pattern', 'propagated')
+        where identified_by in ('overture_category', 'both', 'name_pattern', 'propagated')
         """
     ),
     engine,
@@ -221,6 +264,7 @@ if (r3["is_boba"] == "n").any():
 #
 # Paste the confirmed numbers into `docs/methodology.md`:
 #
+# - source overlap: Yelp-only ___, Overture-only ___, DOHMH-only ___
 # - recall (Coffee/Tea universe): ___%  (CI ___)
 # - identification precision: overture_category ___%, name_pattern ___%
 # - match-tail precision: ___%

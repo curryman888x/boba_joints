@@ -38,6 +38,8 @@ BOBA_FALLBACK_CATEGORIES = {
 }
 
 # Name-based signal for boba shops, applied to both Overture names and DOHMH `dba`.
+# Yelp's `bubbletea` category is the primary discovery source; this pattern is the
+# secondary net that recovers Overture-only and DOHMH-only shops Yelp doesn't list.
 # Chain names are included because DOHMH cuisine has no "bubble tea" value.
 # All groups non-capturing so pandas .str.contains(regex=True) doesn't warn.
 BOBA_NAME_PATTERN = (
@@ -67,9 +69,8 @@ DOHMH_SOCRATA_BASE = f"https://data.cityofnewyork.us/resource/{DOHMH_DATASET_ID}
 # Register one free at https://evergreen.data.socrata.com/profile/app_tokens
 SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN") or None
 
-# Yelp Fusion API key -> current open/closed status for shops DOHMH can't verify.
+# Yelp Fusion API key -> primary boba discovery (its curated `bubbletea` category)
+# plus current open/closed status for free.
 # Free key at https://www.yelp.com/developers  (~500 calls/day).
 YELP_API_KEY = os.environ.get("YELP_API_KEY") or None
-YELP_MATCH_URL = "https://api.yelp.com/v3/businesses/matches"
-YELP_BUSINESS_URL = "https://api.yelp.com/v3/businesses"  # + /{id}
 YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search"

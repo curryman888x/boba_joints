@@ -72,7 +72,8 @@ class IngestRun(Base):
     __table_args__ = (CheckConstraint("status in ('running', 'ok', 'failed')", name="status"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    source: Mapped[str] = mapped_column(String, index=True)  # overture | dohmh
+    # overture | dohmh | match | yelp_discover | yelp_link | analyze
+    source: Mapped[str] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String, server_default="running")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -244,7 +245,7 @@ class BobaShop(Base):
         ),
         CheckConstraint(
             "first_seen_source is null or first_seen_source in "
-            "('dohmh_prepermit_inspection', 'dohmh_first_inspection', 'overture_release')",
+            "('dohmh_first_inspection', 'overture_release')",
             name="first_seen_source",
         ),
     )

@@ -2,13 +2,20 @@
 
 ## 1. Identifying boba shops
 
-There is **no ground-truth list**, so recall is a lower bound. Two mechanisms:
+There is **no ground-truth list**, so recall is a lower bound. Three layers, each
+only *adding* shops:
+
+**Yelp** (`boba/ingest/yelp.py::discover`) — the primary source
+- Yelp's `bubbletea` category is **hand-curated**. `discover()` enumerates it
+  over an adaptive NYC grid and keeps a business only if `bubbletea` is its
+  *primary* category (or the name matches `BOBA_NAME_PATTERN`) — dropping ~260
+  restaurants that merely list boba 3rd. ~446 businesses.
 
 **Overture** (`boba/filters.py::overture_is_boba`)
 - primary: `categories.primary` or `alternate` == `bubble_tea` — Overture's own
-  tag, not a regex. ~435 of ~445.
-- fallback: category in a broader set (`cafe`, `tea_room`, `dessert_shop`, …)
-  **and** the name matches `BOBA_NAME_PATTERN`. ~10 more.
+  tag, not a regex. ~428 of ~449.
+- fallback: category in a broader set (`cafe`, `tea_room`, `desserts`, …) **and**
+  the name matches `BOBA_NAME_PATTERN`. ~20 more.
 
 **DOHMH** (`boba/filters.py::dohmh_is_boba`)
 - **100% name regex** on `dba` (`BOBA_NAME_PATTERN` — chains + keyword fragments).
@@ -17,59 +24,69 @@ There is **no ground-truth list**, so recall is a lower bound. Two mechanisms:
   Chun Yang, Sunright, Chagee, …) because their names carry no generic keyword.
 
 **Label propagation** (`boba/match.py`)
-- Any DOHMH establishment that matches an Overture `bubble_tea` place (below)
-  counts as boba even if its `dba` never hit the regex. Recovers ~60
-  establishments the regex alone misses.
+- Any DOHMH establishment that matches an Overture `bubble_tea` place counts as
+  boba even if its `dba` never hit the regex.
 
 ### Provenance — `boba_shops.identified_by`
 
-Every shop carries how it was identified, so counts can be reported by
-confidence:
+Every shop carries how it was identified, strongest first:
 
 | value | meaning | count | precision-backed by |
 |---|---|---|---|
-| `both` | Overture `bubble_tea` **and** a name match | ~217 | strongest |
-| `overture_category` | Overture `bubble_tea` tag, no independent name hit | ~197 | Overture's curated taxonomy |
-| `name_pattern` | name regex only (Overture fallback name, or DOHMH `dba`) | ~108 | needs vetting |
-| `propagated` | no category or name hit anywhere — pure spatial inference | ~1 | weakest |
+| `yelp_category` | seeded from Yelp's curated `bubbletea` category | ~350 | Yelp's hand curation |
+| `both` | Overture `bubble_tea` **and** a name match (no Yelp) | ~100 | strongest of the non-Yelp tail |
+| `overture_category` | Overture `bubble_tea` tag only (no Yelp, no name hit) | ~135 | Overture's curated taxonomy |
+| `name_pattern` | name regex only (Overture fallback name, or DOHMH `dba`) | ~65 | needs vetting |
+| `propagated` | no category or name hit anywhere — pure spatial inference | ~0 | weakest |
 
-So ~414 of 523 rest on Overture's tag; ~108 on the regex alone.
+So ~585 of ~655 rest on a curated category (Yelp or Overture); ~65 on the regex
+alone.
 
 ### Known gaps
-- Independents with no keyword in the name ("Sunright Tea Studio", "O-CHA").
+- Independents with no keyword in the name that neither Yelp nor Overture tags.
 - Overture places filed under `restaurant` / `chinese_restaurant` (not in the
   fallback set).
 - Regex false positives (e.g. `the alley` once matched "THE ALLEY PIZZA LOUNGE";
   the distance gate in matching removes most).
-- Overture category false positives (e.g. "Poke Cafe" tagged `bubble_tea`).
+- Category false positives (e.g. "Poke Cafe" tagged `bubble_tea`).
 
 ### `notebooks/03_recall_precision.py`
 
-A hand-labelling workbench: generates `data/recall_sample.csv`,
-`data/match_review.csv`, `data/boba_set_review.csv`; you fill the blank column;
-recompute cells produce recall (Wilson CI), match-tail precision, and
-per-`identified_by` precision, and list concrete rejects.
+A hand-labelling workbench: a source-overlap summary (who finds what), plus
+`data/recall_sample.csv`, `data/match_review.csv`, `data/boba_set_review.csv` —
+you fill the blank column; recompute cells produce recall (Wilson CI), match-tail
+precision, and per-`identified_by` precision, and list concrete rejects.
 
-Report counts as **"≥ N (name/category identification)"**, never a hard "N".
-The recall universe is DOHMH `cuisine_description = 'Coffee/Tea'` (~2,220
-establishments; the pipeline flags ~195).
+Report counts as **"≥ N (Yelp/Overture/name identification)"**, never a hard "N".
+The DOHMH recall universe is `cuisine_description = 'Coffee/Tea'` (~2,220
+establishments; the pipeline flags ~195 of them by name).
 
-## 2. Matching Overture ↔ DOHMH (`boba/match.py`)
+## 2. Linking the shop to a brand and a timeline
 
+Discovery gives a shop; linking attaches Overture's brand + geometry and DOHMH's
+inspection dates for the *same physical shop*. All name comparisons run on a
+**name key**: lowercase, punctuation → space, then drop generic tokens (`bubble`,
+`tea`, `boba`, `cafe`, `the`, `llc`, …) so two unrelated shops don't score high
+just for both containing "bubble tea".
+
+### Yelp business → Overture id + CAMIS (`boba/ingest/yelp.py::link`)
+For each Yelp business, every Overture place and every DOHMH establishment within
+`160 m` (`ST_DWithin` on the `geography` cast). Score each side as
+`name_sim − min(dist/20, 15)`; keep the best if `name_sim ≥ 60`. One row per Yelp
+business in `yelp_matches` (its best Overture id, its best CAMIS). ~240 of ~446
+link to at least one side.
+
+### Overture place ↔ DOHMH establishment (`boba/match.py`)
 1. **Candidates**: for each Overture boba place, every DOHMH establishment within
-   `RADIUS_M = 120 m` (`ST_DWithin` on the `geography` cast → real metres).
-2. **Name key**: lowercase, punctuation → space, then drop generic tokens
-   (`bubble`, `tea`, `boba`, `cafe`, `the`, `llc`, …) so two unrelated shops
-   don't score high just for both containing "bubble tea".
-3. **Similarity**: `rapidfuzz.fuzz.token_set_ratio` on the two keys (0–100).
-4. **Score**: `name_sim − min(dist/12, 25) + (8 if the DOHMH street's first token
+   `RADIUS_M = 120 m`.
+2. **Score**: `name_sim − min(dist/12, 25) + (8 if the DOHMH street's first token
    is in the Overture address)`.
-5. **Keep** if `name_sim ≥ 72 and dist ≤ 60 m`, or `name_sim ≥ 55 and dist ≤ 35 m`.
-6. **Up to 5 matches per place** — a shop that closed and re-permitted has a new
+3. **Keep** if `name_sim ≥ 72 and dist ≤ 60 m`, or `name_sim ≥ 55 and dist ≤ 35 m`.
+4. **Up to 5 matches per place** — a shop that closed and re-permitted has a new
    CAMIS, and both matter for the timeline.
 
-Idempotent (`truncate place_matches` + rebuild). `score` / `name_similarity` /
-`method` are kept so a review pass can accept/reject the tail.
+Both are idempotent (`truncate` + rebuild). `place_matches` keeps `score` /
+`name_similarity` / `method` so a review pass can accept/reject the tail.
 
 ## 3. Borough + NYC filter (`boba/analyze.py`)
 
@@ -78,8 +95,8 @@ Overture `locality` is neighbourhood-level ("Woodside") and disagrees with DOHMH
 `boroughs`; `analyze._assign_boroughs` does `ST_Contains` on each shop's point:
 
 - in a borough → that borough's name (one of exactly five)
-- outside all five → **dropped** (~14; the NYC bbox rectangle clips Nassau and
-  Westchester — Great Neck, Manhasset, New Rochelle, …)
+- outside all five → **dropped** (~100; Yelp's lat/lon search and the Overture
+  bbox both pull in Nassau, Westchester and NJ — Great Neck, Manhasset, Newark, …)
 - no geometry but a CAMIS → DOHMH `boro` fallback (DOHMH is NYC-only)
 
 ## 4. Dates (`boba/analyze.py`) — evidence bounds, not lifecycle events
@@ -90,35 +107,41 @@ So the `boba_shops` date columns are named for what they actually are:
 ### `first_seen_date` / `first_seen_source`
 | source | what it is | bias |
 |---|---|---|
-| `dohmh_first_inspection` | earliest DOHMH inspection — preferring the **"Pre-permit / Initial"** inspection (done as a new food business is licensed to open); 105 of 195 boba CAMIS have one | **late** — the inspection is on/after opening, typically weeks to a quarter |
+| `dohmh_first_inspection` | earliest DOHMH inspection — preferring the **"Pre-permit / Initial"** inspection (done as a new food business is licensed to open) | **late** — the inspection is on/after opening, typically weeks to a quarter |
 | `overture_release` | earliest Overture release the place appears in — **only** once it has persisted across ≥ 2 of our ingests | quarter |
 
 Read `first_seen_date` as **"operating by at least this date, ±1 quarter"** — not
 "opened on". Overture `source_update_time` is deliberately unused (it clusters in
-the current year). ~245 of 512 shops get one; the rest have no DOHMH match.
+the current year). **Only ~269 of ~655 shops get a date at all** — the rest are
+Yelp/Overture entities with no DOHMH match (many too new to have been inspected).
 
 The year summary is **"first seen per year"**, a proxy for openings. The 2023
-jump (15 → 92) is real; the split between adjacent years has ±1 quarter of
-per-shop noise.
+jump (15 → 99) is real; the split between adjacent years has ±1 quarter of
+per-shop noise; recent years are undercounted (permit gap + no DOHMH match yet).
 
 ### `last_seen_date`
 Latest evidence the shop existed — `max(DOHMH last inspection, Overture release)`.
 
 ### `status` / `status_basis`
 `status` ∈ `open` / `closed` / `unknown`. **`open` requires a positive signal**;
-with none, status is `unknown` (~63) — a stale record can't be told from a new
-shop. `status_basis` records which signal, strongest first:
+with none, status is `unknown` (~53) — a stale record can't be told from a new
+shop. `status_basis` records which signal, strongest first (the order in
+`analyze._closed`):
 
 | basis | meaning | trust |
 |---|---|---|
-| `dohmh_closed_by_dohmh` | DOHMH "Establishment Closed" action, not reopened (health closure, ~4) | high |
+| `dohmh_closed_by_dohmh` | DOHMH "Establishment Closed" action, not reopened (~3) | high |
 | `yelp_closed` | Yelp `is_closed` — current; beats a stale inspection | high |
-| `overture_permanently_closed` | Overture snapshot | low–med |
-| `dohmh_inactive` | no inspection in > `INACTIVE_DAYS` (550) and not force-closed | low |
-| `dohmh_active` | inspected within ~18 months | high (open) |
-| `yelp_open` | Yelp says open | high (open) |
-| `overture_open` | **only** Overture's `operating_status` — it lags real closures (~194) | **low** |
-| `none` | no signal → `unknown` | — |
+| `overture_permanently_closed` | Overture `operating_status` snapshot (~10) | low–med |
+| `dohmh_inactive` | no inspection in > `INACTIVE_DAYS` (550) and not force-closed (~11) | low |
+| `dohmh_active` | inspected within ~18 months (~255) | high (open) |
+| `yelp_open` | Yelp says open, no DOHMH inspection to corroborate (~172) | high (open) |
+| `overture_open` | **only** Overture's `operating_status` — it lags real closures (~150) | **low** |
+| `none` | no signal → `unknown` (~53) | — |
+
+A recent DOHMH inspection outranks Yelp for the *open* basis (an inspection is a
+hard "was operating on date X"); Yelp `is_closed` still outranks a stale
+inspection for the *closed* basis.
 
 `first_seen > closed` contradictions drop the weaker `first_seen`.
 

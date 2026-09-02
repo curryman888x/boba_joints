@@ -89,15 +89,16 @@ ingest-overture:
 ingest-dohmh:
     uv run python -m boba.ingest.dohmh
 
-# Link Overture places <-> DOHMH establishments
+# Link Overture places <-> DOHMH establishments (feeds Yelp linking + analyze)
 match:
     uv run python -m boba.match
 
-# Yelp current open/closed for shops DOHMH can't verify (needs YELP_API_KEY; capped, cached)
+# Yelp: discover NYC bubbletea shops (primary source) + link to Overture/DOHMH
+# (needs YELP_API_KEY; search calls capped, discovery cached)
 ingest-yelp:
     uv run python -m boba.ingest.yelp
 
-# Compute boba_shops + status_events + summary output
+# Merge sources into boba_shops + write data/boba_status.csv + year summary
 analyze:
     uv run python -m boba.analyze
 

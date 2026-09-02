@@ -296,7 +296,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.CheckConstraint(
-            "first_seen_source is null or first_seen_source in ('dohmh_prepermit_inspection', 'dohmh_first_inspection', 'overture_release')",
+            "first_seen_source is null or first_seen_source in ('dohmh_first_inspection', 'overture_release')",
             name=op.f("ck_boba_shops_first_seen_source"),
         ),
         sa.CheckConstraint(
