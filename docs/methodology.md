@@ -95,7 +95,14 @@ Overture `locality` is neighbourhood-level ("Woodside") and disagrees with DOHMH
 match — the coverage gap, left explicit rather than faked).
 
 ### closed_date / status
-| signal | confidence | note |
+
+`status` is one of `open` / `closed` / `unknown`. **`open` requires a positive
+signal** — a DOHMH inspection within `INACTIVE_DAYS` (550), or Overture
+`operating_status = 'open'`. With no signal either way (Overture-only shop,
+`operating_status` NULL, no DOHMH record) the status is **`unknown`**, not `open`
+— a stale record can't be distinguished from a genuinely-new shop. (~70 of 523.)
+
+| closed signal | confidence | note |
 |---|---|---|
 | DOHMH `Establishment Closed by DOHMH` action, not reopened | high | health-department closure — rare (~4) |
 | Overture `operating_status == permanently_closed` | low–medium | current snapshot; date ≈ `source_update_time` |

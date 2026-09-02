@@ -80,7 +80,7 @@ brands = sorted(b for b in shops["brand"].dropna().unique())
 f_boro = st.sidebar.multiselect("Borough", boroughs, default=boroughs)
 f_ident = st.sidebar.multiselect("Identified by", ALL_IDENT, default=ALL_IDENT)
 f_status = st.sidebar.multiselect(
-    "Status", ["open", "closed", "unknown"], default=["open", "closed"]
+    "Status", ["open", "closed", "unknown"], default=["open", "closed", "unknown"]
 )
 f_brand = st.sidebar.multiselect("Brand (blank = all)", brands)
 
@@ -108,9 +108,14 @@ st.caption(
 )
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Boba shops", len(f))
-k2.metric("Open now", int((f["status"] == "open").sum()))
+k2.metric("Open", int((f["status"] == "open").sum()))
 k3.metric("Closed", int((f["status"] == "closed").sum()))
-k4.metric("With a known opening date", int(f["opened_date"].notna().sum()))
+k4.metric("Status unknown", int((f["status"] == "unknown").sum()))
+st.caption(
+    ":grey[**open** = a recent DOHMH inspection or Overture `operating_status=open`; "
+    "**unknown** = Overture-only, no signal either way (a stale record can't be told "
+    "from a genuinely-new shop).]"
+)
 
 # --- recent activity (exact dates) --------------------------------
 a1, a2 = st.columns(2)

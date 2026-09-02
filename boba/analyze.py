@@ -153,6 +153,7 @@ def _opened(est, ov) -> tuple[dt.date | None, str | None, str | None]:
 
 
 def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str]:
+    # --- explicit closure signals ---
     if est is not None and est.closed_flag and pd.notna(est.closed_date):
         reopened = pd.notna(est.reopened_date) and est.reopened_date >= est.closed_date
         if not reopened:
@@ -164,7 +165,11 @@ def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str]:
         idle = (today - est.last_inspection_date).days
         if idle > INACTIVE_DAYS and not est.closed_flag:
             return est.last_inspection_date, "dohmh_inactive", "closed"
-    return None, None, "open"
+        return None, None, "open"  # inspected within ~18 months -> operating
+    # --- positive "open" signal, else we genuinely don't know ---
+    if ov is not None and ov.operating_status == "open":
+        return None, None, "open"
+    return None, None, "unknown"
 
 
 def _identified_by(ov, est) -> str:
