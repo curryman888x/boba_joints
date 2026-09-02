@@ -15,7 +15,7 @@ covers the first, second and fourth well enough to be the spine.
 | Is it a boba shop? | ✅ **hand-curated `bubbletea` category** — the primary discovery signal | ✅ `bubble_tea` category — curated, but misses ~200 Yelp has | ⚠️ no such cuisine; name-guess on `dba` |
 | Location | ✅ point + address | ✅ precise point, address | ⚠️ lat/long (~99% filled) |
 | Brand | ⚠️ name only | ✅ brand + Wikidata id | ❌ none |
-| **Opening / closing date** | ❌ none | ❌ none | ⚠️ **no such field** — first *inspection* ≈ "operating by" (permit lag), silence ≈ closed |
+| **Opening / closing date** | ❌ none | ❌ none | ⚠️ **no such field** — first *inspection* ≈ "operating by" (permit lag); an explicit "Closed by DOHMH" action is dated, but plain silence is not a closure |
 | Currently open? | ✅ `is_closed` — current, purpose-built, free with discovery | ⚠️ `operating_status` — lags real closures | ⚠️ trailing (inspected within ~18 mo) |
 | History before mid-2023 | ⚠️ keeps closed listings, no dates | ❌ first release July 2023 | ✅ inspections to ~2016 (~2022 for boba names) |
 

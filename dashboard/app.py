@@ -176,7 +176,8 @@ with tab_tl:
     st.plotly_chart(fig, width="stretch")
     st.caption(
         "'first seen' ≈ openings but dated by first inspection (lags, ±1 quarter). "
-        "'closed' is DOHMH forced-closure / >18mo silence / Yelp / Overture — noisy and lagging."
+        "'closed' is a DOHMH forced-closure, Yelp `is_closed`, or Overture "
+        "`permanently_closed` — noisy and lagging. Inspection silence is *unknown*, not closed."
     )
     st.dataframe(tl.set_index("year"), width="stretch")
 

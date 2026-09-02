@@ -32,7 +32,7 @@ from boba.models import BobaShop
 log = get_logger("boba.analyze")
 
 SINCE_YEAR = 2022  # DOHMH inspection history floor; nothing credible before this
-INACTIVE_DAYS = 550  # no inspection in ~18 months + not force-closed => likely closed
+INACTIVE_DAYS = 550  # no inspection in ~18 months => stale record, status can't be told
 
 # CAMIS in play: name-matched, or linked to an Overture / Yelp boba entity
 _BOBA_CAMIS = """
@@ -192,8 +192,8 @@ def _closed(est, ov, yb, today) -> tuple[dt.date | None, str | None, str, str]:
             return None, None, "open", "dohmh_active"  # inspected within ~18 months
         if yelp is False:  # Yelp is current -- an inspection gap doesn't override it
             return None, None, "open", "yelp_open"
-        if not est.closed_flag:  # long silence, nothing says open -> presumed closed
-            return est.last_inspection_date, "dohmh_inactive", "closed", "dohmh_inactive"
+        if not est.closed_flag:  # 18+ months no inspection, nothing says open -> can't tell
+            return None, None, "unknown", "dohmh_inactive"
     # --- positive "open" signals, most trustworthy first, else unknown ---
     if yelp is False:
         return None, None, "open", "yelp_open"

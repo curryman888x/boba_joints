@@ -83,10 +83,10 @@ def test_recent_inspection_is_open_dohmh_active():
     assert _closed(e, ov(), None, TODAY) == (None, None, "open", "dohmh_active")
 
 
-def test_long_silence_is_closed_inactive():
+def test_long_silence_is_unknown_not_closed():
+    # 18+ months without an inspection and nothing else to go on -> can't tell
     e = est(last_inspection_date=dt.date(2024, 1, 1))
-    d, src, status, basis = _closed(e, ov(), None, TODAY)
-    assert (status, basis, src) == ("closed", "dohmh_inactive", "dohmh_inactive")
+    assert _closed(e, ov(), None, TODAY) == (None, None, "unknown", "dohmh_inactive")
 
 
 def test_overture_open_is_low_trust_basis():

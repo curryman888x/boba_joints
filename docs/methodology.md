@@ -130,18 +130,22 @@ shop. `status_basis` records which signal, strongest first (the order in
 
 | basis | meaning | trust |
 |---|---|---|
-| `dohmh_closed_by_dohmh` | DOHMH "Establishment Closed" action, not reopened (~3) | high |
-| `yelp_closed` | Yelp `is_closed` — current; beats a stale inspection | high |
-| `overture_permanently_closed` | Overture `operating_status` snapshot (~10) | low–med |
-| `dohmh_inactive` | no inspection in > `INACTIVE_DAYS` (550) and not force-closed (~11) | low |
-| `dohmh_active` | inspected within ~18 months (~255) | high (open) |
-| `yelp_open` | Yelp says open, no DOHMH inspection to corroborate (~172) | high (open) |
-| `overture_open` | **only** Overture's `operating_status` — it lags real closures (~150) | **low** |
-| `none` | no signal → `unknown` (~53) | — |
+| `dohmh_closed_by_dohmh` | `status=closed` — DOHMH "Establishment Closed" action, not reopened (~3) | high |
+| `yelp_closed` | `status=closed` — Yelp `is_closed`; beats a stale inspection | high |
+| `overture_permanently_closed` | `status=closed` — Overture `operating_status` snapshot (~10) | low–med |
+| `dohmh_active` | `status=open` — inspected within ~18 months (~255) | high |
+| `yelp_open` | `status=open` — Yelp says open, no DOHMH inspection to corroborate (~179) | high |
+| `overture_open` | `status=open` — **only** Overture's `operating_status`, which lags real closures (~151) | **low** |
+| `dohmh_inactive` | `status=unknown` — no inspection in > `INACTIVE_DAYS` (550) and nothing else says open. A stale record, **not** a closure (~4) | — |
+| `none` | `status=unknown` — no signal at all (~53) | — |
 
-A recent DOHMH inspection outranks Yelp for the *open* basis (an inspection is a
+Order of precedence in `analyze._closed`: force-closed → `yelp_closed` →
+`overture_permanently_closed` → recent inspection (`dohmh_active`) → `yelp_open` →
+inspection gap (`dohmh_inactive`, now `unknown`) → `overture_open` → `none`. A
+recent DOHMH inspection outranks Yelp for the *open* basis (an inspection is a
 hard "was operating on date X"); Yelp `is_closed` still outranks a stale
-inspection for the *closed* basis.
+inspection for the *closed* basis. **Inspection silence is never a closure** —
+DOHMH is trusted for dates and its own explicit closure actions, nothing more.
 
 `first_seen > closed` contradictions drop the weaker `first_seen`.
 
