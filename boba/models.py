@@ -170,6 +170,8 @@ class DohmhInspection(Base):
             "violation_code",
             "action",
             name="uq_dohmh_inspection_row",
+            # so re-runs don't re-insert rows whose violation_code / action is NULL
+            postgresql_nulls_not_distinct=True,
         ),
     )
 

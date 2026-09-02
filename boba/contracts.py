@@ -242,10 +242,16 @@ def ingest_run(session: Session, source: str, *, source_version: str | None = No
     try:
         yield run
     except BaseException as exc:
+        # the work transaction may be aborted; clear it before recording the failure
+        session.rollback()
         run.status = "failed"
         run.error = f"{type(exc).__name__}: {exc}"[:2000]
         run.finished_at = datetime.now(UTC)
-        session.commit()
+        try:
+            session.add(run)
+            session.commit()
+        except Exception:  # don't mask the original error
+            session.rollback()
         raise
     run.status = "ok"
     run.finished_at = datetime.now(UTC)

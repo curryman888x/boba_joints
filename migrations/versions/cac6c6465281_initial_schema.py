@@ -1,23 +1,23 @@
 """initial schema
 
-Revision ID: 59a86a5c5ebe
+Revision ID: cac6c6465281
 Revises:
-Create Date: 2026-09-01 15:44:58.311721
+Create Date: 2026-09-01 17:48:31.716528
 
 """
 
-from collections.abc import Sequence
+from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
+import sqlalchemy as sa
 from geoalchemy2 import Geometry
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "59a86a5c5ebe"
-down_revision: str | Sequence[str] | None = None
-branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+revision: str = "cac6c6465281"
+down_revision: Union[str, Sequence[str], None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -310,7 +310,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_dohmh_inspections")),
         sa.UniqueConstraint(
-            "camis", "inspection_date", "violation_code", "action", name="uq_dohmh_inspection_row"
+            "camis",
+            "inspection_date",
+            "violation_code",
+            "action",
+            name="uq_dohmh_inspection_row",
+            postgresql_nulls_not_distinct=True,
         ),
     )
     op.create_index(
