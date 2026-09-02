@@ -1,9 +1,10 @@
 """Validation contracts for the Overture and DOHMH sources, plus the ingest manifest."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -139,13 +140,12 @@ class OverturePlaceRecord(BaseModel):
     def _known_status(cls, v: str | None) -> str | None:
         if v is not None and v not in KNOWN_OPERATING_STATUS:
             raise ContractViolation(
-                f"unknown Overture operating_status {v!r} "
-                f"(known: {sorted(KNOWN_OPERATING_STATUS)})"
+                f"unknown Overture operating_status {v!r} (known: {sorted(KNOWN_OPERATING_STATUS)})"
             )
         return v
 
     @model_validator(mode="after")
-    def _inside_nyc(self) -> "OverturePlaceRecord":
+    def _inside_nyc(self) -> OverturePlaceRecord:
         lo_lon, lo_lat, hi_lon, hi_lat = _NYC_SANITY
         if not (lo_lon <= self.lon <= hi_lon and lo_lat <= self.lat <= hi_lat):
             raise ContractViolation(
@@ -244,11 +244,11 @@ def ingest_run(session: Session, source: str, *, source_version: str | None = No
     except BaseException as exc:
         run.status = "failed"
         run.error = f"{type(exc).__name__}: {exc}"[:2000]
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = datetime.now(UTC)
         session.commit()
         raise
     run.status = "ok"
-    run.finished_at = datetime.now(timezone.utc)
+    run.finished_at = datetime.now(UTC)
     session.commit()
 
 
@@ -273,9 +273,7 @@ def drift_warnings(prev: IngestRun | None, curr: IngestRun) -> list[str]:
                 f"since {prev.started_at:%Y-%m-%d}"
             )
     if prev.min_date and curr.min_date and curr.min_date < prev.min_date:
-        out.append(
-            f"coverage now reaches back to {curr.min_date} (was {prev.min_date})"
-        )
+        out.append(f"coverage now reaches back to {curr.min_date} (was {prev.min_date})")
     if prev.source_version and curr.source_version and prev.source_version != curr.source_version:
         out.append(f"source version {prev.source_version} -> {curr.source_version}")
     return out

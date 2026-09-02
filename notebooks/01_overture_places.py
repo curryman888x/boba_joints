@@ -35,7 +35,9 @@ from collections import Counter
 import geopandas as gpd
 import pandas as pd
 
-from boba.config import BOBA_FALLBACK_CATEGORIES, BOBA_NAME_PATTERN, DATA_DIR, NYC_BBOX
+from boba.config import BOBA_FALLBACK_CATEGORIES, BOBA_NAME_PATTERN, NYC_BBOX, data_dir
+
+DATA_DIR = data_dir()
 
 pd.set_option("display.max_columns", 40)
 pd.set_option("display.width", 160)
@@ -52,6 +54,7 @@ print("target file:", OUT)
 
 # %% [markdown]
 # ## Download the extract (cached on disk)
+
 
 # %%
 def download_places(bbox: tuple[float, float, float, float], out) -> None:
@@ -80,6 +83,7 @@ gdf.head(3)
 # ## Unpack the nested Overture fields
 #
 # `names`, `categories`, `addresses`, `brand` come back as dicts / lists of dicts.
+
 
 # %%
 def _as_list(x):
@@ -127,9 +131,9 @@ flat = pd.DataFrame(
         "name": gdf["names"].map(_name),
         "cat_primary": gdf["categories"].map(_cat_primary),
         "cat_all": gdf["categories"].map(_cat_all),
-        "basic_category": gdf["basic_category"] if "basic_category" in gdf else None,
+        "basic_category": gdf.get("basic_category"),
         "confidence": gdf.get("confidence"),
-        "operating_status": gdf["operating_status"] if "operating_status" in gdf else None,
+        "operating_status": gdf.get("operating_status"),
     }
 )
 addr = gdf["addresses"].map(_first_addr)
@@ -172,7 +176,17 @@ for c, n in sorted(all_cat_counter.items(), key=lambda kv: -kv[1]):
 # %%
 bubble_tea = flat[flat["cat_all"].map(lambda lst: "bubble_tea" in lst)].copy()
 print("bubble_tea rows:", len(bubble_tea))
-bubble_tea[["name", "cat_primary", "cat_all", "confidence", "operating_status", "addr_freeform", "locality"]].head(40)
+bubble_tea[
+    [
+        "name",
+        "cat_primary",
+        "cat_all",
+        "confidence",
+        "operating_status",
+        "addr_freeform",
+        "locality",
+    ]
+].head(40)
 
 # %% [markdown]
 # ## Q3 — is `operating_status` populated for NYC?
@@ -208,13 +222,19 @@ print("TOTAL Overture boba candidates in NYC:", len(candidates))
 print("\nby borough/locality:")
 print(candidates["locality"].value_counts().head(15))
 print("\nby operating_status:")
-print(candidates.get("operating_status").value_counts(dropna=False) if "operating_status" in candidates else "n/a")
+print(
+    candidates.get("operating_status").value_counts(dropna=False)
+    if "operating_status" in candidates
+    else "n/a"
+)
 print("\nconfidence describe:")
 print(candidates["confidence"].describe())
 
 # %%
 # Address shape we'll rely on for DOHMH matching — eyeball a sample.
-candidates[["name", "addr_freeform", "locality", "region", "postcode"]].sample(min(25, len(candidates)), random_state=0)
+candidates[["name", "addr_freeform", "locality", "region", "postcode"]].sample(
+    min(25, len(candidates)), random_state=0
+)
 
 # %% [markdown]
 # ## Verdict

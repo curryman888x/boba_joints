@@ -50,6 +50,22 @@ migrate-check:
 check:
     uv run python -m boba.checks
 
+# --- quality ---------------------------------------------------------
+
+# Lint + format-check
+lint:
+    uv run ruff check .
+    uv run ruff format --check .
+
+# Auto-fix lint + format
+fmt:
+    uv run ruff check --fix .
+    uv run ruff format .
+
+# Run the test suite (needs the db container up for migration/checks tests)
+test:
+    uv run pytest -q
+
 # --- pipeline ---------------------------------------------------------
 
 # Overture: download NYC `place` extract, load boba candidates

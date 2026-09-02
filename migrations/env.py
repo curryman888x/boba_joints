@@ -5,6 +5,7 @@
 - GeoAlchemy2's alembic_helpers keep autogenerate sane around PostGIS
   (spatial indexes, geometry type rendering, ignoring spatial_ref_sys).
 """
+
 from __future__ import annotations
 
 from logging.config import fileConfig
@@ -17,7 +18,11 @@ from boba.config import DATABASE_URL
 from boba.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+# Let a caller (e.g. the test harness) inject a URL via Config; otherwise use .env.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", DATABASE_URL)
+DB_URL = config.get_main_option("sqlalchemy.url")
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -25,7 +30,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def include_name(name, type_, parent_names):
+def include_name(name, type_, parent_names):  # noqa: ARG001  (Alembic callback signature)
     """Keep autogenerate scoped to the public schema (ignore postgis/tiger/topology)."""
     if type_ == "schema":
         return name in (None, "public")
@@ -34,7 +39,7 @@ def include_name(name, type_, parent_names):
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=DATABASE_URL,
+        url=DB_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

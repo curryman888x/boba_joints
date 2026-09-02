@@ -1,4 +1,5 @@
 """Project configuration: paths, DB URL, and the NYC / boba filter constants."""
+
 from __future__ import annotations
 
 import os
@@ -9,12 +10,16 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+psycopg2://boba:boba@localhost:5433/boba"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+psycopg2://boba:boba@localhost:5433/boba")
 
 DATA_DIR = PROJECT_ROOT / "data"
-DATA_DIR.mkdir(exist_ok=True)
+
+
+def data_dir() -> Path:
+    """Return the data dir, creating it on first use (no import-time side effect)."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return DATA_DIR
+
 
 # Bounding box covering all five NYC boroughs, as (min_lon, min_lat, max_lon, max_lat).
 NYC_BBOX = (-74.2591, 40.4774, -73.7002, 40.9162)
@@ -36,14 +41,15 @@ BOBA_FALLBACK_CATEGORIES = {
 
 # Name-based signal for boba shops, applied to both Overture names and DOHMH `dba`.
 # Chain names are included because DOHMH cuisine has no "bubble tea" value.
+# All groups non-capturing so pandas .str.contains(regex=True) doesn't warn.
 BOBA_NAME_PATTERN = (
-    r"(?i)("
-    r"\bboba\b|bubble\s*tea|milk\s*tea|pearl\s*(milk\s*)?tea|tapioca|\bbbt\b|"
-    r"kung\s*fu\s*tea|gong\s*cha|chatime|coco\s*fresh|\bcoco\b\s*(tea|bubble)|"
+    r"(?i)(?:"
+    r"\bboba\b|bubble\s*tea|milk\s*tea|pearl\s*(?:milk\s*)?tea|tapioca|\bbbt\b|"
+    r"kung\s*fu\s*tea|gong\s*cha|chatime|coco\s*fresh|\bcoco\b\s*(?:tea|bubble)|"
     r"vivi\s*bubble|xing\s*fu\s*tang|tiger\s*sugar|happy\s*lemon|sharetea|share\s*tea|"
     r"yi\s*fang|moge\s*tee|m[o0]ge\s*tee|machi\s*machi|the\s*alley|tp\s*tea|ten\s*ren|"
-    r"quickly|possmei|wanpo|truedan|meet\s*fresh|no[.\s]*1\s*bubble|gong\s*cha|"
-    r"tea\s*(&|and)\s*milk|milktea|teado|boba\s*guys|omomo|smoodee|tastea|tea\s*more|"
+    r"quickly|possmei|wanpo|truedan|meet\s*fresh|no[.\s]*1\s*bubble|"
+    r"tea\s*(?:&|and)\s*milk|milktea|teado|boba\s*guys|omomo|smoodee|tastea|tea\s*more|"
     r"i[- ]?tea|it'?s\s*boba|boba\s*tea|bubble\s*house|tea\s*station|comebuy|come\s*buy"
     r")"
 )

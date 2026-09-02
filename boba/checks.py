@@ -1,4 +1,5 @@
 """Post-pipeline invariants. Each query counts rows that VIOLATE the rule; 0 == pass."""
+
 from __future__ import annotations
 
 import sys
@@ -6,6 +7,9 @@ import sys
 from sqlalchemy import text
 
 from boba.db import engine
+from boba.log import get_logger, setup
+
+log = get_logger("boba.checks")
 
 INVARIANTS: list[tuple[str, str]] = [
     (
@@ -29,8 +33,7 @@ INVARIANTS: list[tuple[str, str]] = [
     ),
     (
         "place_matches.score in [0,100]",
-        "select count(*) from place_matches "
-        "where score is not null and (score < 0 or score > 100)",
+        "select count(*) from place_matches where score is not null and (score < 0 or score > 100)",
     ),
     (
         "dohmh closed_flag implies closed_date",
@@ -72,23 +75,25 @@ INVARIANTS: list[tuple[str, str]] = [
 ]
 
 
-def run() -> int:
+def run(bind=None) -> int:
     failed = 0
-    with engine.connect() as conn:
+    with (bind or engine).connect() as conn:
         for label, sql in INVARIANTS:
             n = conn.execute(text(sql)).scalar_one()
-            mark = "ok  " if n == 0 else "FAIL"
             if n:
                 failed += 1
-            print(f"  [{mark}] {label}" + (f"  ({n} rows)" if n else ""))
+                log.error("FAIL  %s  (%d rows)", label, n)
+            else:
+                log.info("ok    %s", label)
     if failed:
-        print(f"\n{failed} invariant(s) violated")
+        log.error("%d invariant(s) violated", failed)
     else:
-        print("\nall invariants hold")
+        log.info("all invariants hold")
     return failed
 
 
 def main() -> None:
+    setup()
     sys.exit(1 if run() else 0)
 
 

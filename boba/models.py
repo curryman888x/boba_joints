@@ -8,6 +8,7 @@ Three layers:
 `boba_shops` + `status_events` are recomputed by boba/analyze.py from the raw
 tables; the raw tables are the source of truth.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -55,18 +56,12 @@ class IngestRun(Base):
     that a source changed shape (schema, enum values, date coverage, volume)."""
 
     __tablename__ = "ingest_runs"
-    __table_args__ = (
-        CheckConstraint(
-            "status in ('running', 'ok', 'failed')", name="status"
-        ),
-    )
+    __table_args__ = (CheckConstraint("status in ('running', 'ok', 'failed')", name="status"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String, index=True)  # overture | dohmh
     status: Mapped[str] = mapped_column(String, server_default="running")
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source_version: Mapped[str | None] = mapped_column(String)  # e.g. Overture release id
     row_count: Mapped[int | None] = mapped_column(Integer)  # rows pulled from source
@@ -154,14 +149,12 @@ class DohmhEstablishment(Base):
     closed_flag: Mapped[bool] = mapped_column(Boolean, server_default="false", index=True)
     closed_date: Mapped[date | None] = mapped_column(Date)
     reopened_date: Mapped[date | None] = mapped_column(Date)
-    boba_name_match: Mapped[bool] = mapped_column(
-        Boolean, server_default="false", index=True
-    )
+    boba_name_match: Mapped[bool] = mapped_column(Boolean, server_default="false", index=True)
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
-    inspections: Mapped[list["DohmhInspection"]] = relationship(
+    inspections: Mapped[list[DohmhInspection]] = relationship(
         back_populates="establishment", cascade="all, delete-orphan"
     )
 
@@ -219,9 +212,7 @@ class PlaceMatch(Base):
     method: Mapped[str | None] = mapped_column(String)  # name_addr | name_dist | manual
     distance_m: Mapped[float | None] = mapped_column(Float)
     name_similarity: Mapped[float | None] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class BobaShop(Base):
@@ -229,9 +220,7 @@ class BobaShop(Base):
 
     __tablename__ = "boba_shops"
     __table_args__ = (
-        CheckConstraint(
-            "status in ('open', 'closed', 'unknown')", name="status"
-        ),
+        CheckConstraint("status in ('open', 'closed', 'unknown')", name="status"),
         CheckConstraint(
             "opened_precision is null or opened_precision in ('month', 'quarter', 'year')",
             name="opened_precision",
@@ -263,7 +252,7 @@ class BobaShop(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    events: Mapped[list["StatusEvent"]] = relationship(
+    events: Mapped[list[StatusEvent]] = relationship(
         back_populates="boba_shop", cascade="all, delete-orphan"
     )
 
@@ -291,6 +280,6 @@ class StatusEvent(Base):
     event_date: Mapped[date | None] = mapped_column(Date, index=True)
     source: Mapped[str | None] = mapped_column(String)
     confidence: Mapped[str | None] = mapped_column(String)  # high | proxy | low
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    boba_shop: Mapped[BobaShop] = relationship(back_populates="events")

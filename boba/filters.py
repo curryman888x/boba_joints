@@ -1,4 +1,5 @@
 """The 'is this a boba shop?' predicates, shared by the pipeline and notebooks."""
+
 from __future__ import annotations
 
 import re

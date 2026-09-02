@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: imresamu/postgis:16-3.5
+        env:
+          POSTGRES_USER: boba
+          POSTGRES_PASSWORD: boba
+          POSTGRES_DB: boba
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U boba -d boba"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql+psycopg2://boba:boba@localhost:5433/boba
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trim tiger/topology extensions (matches db/init/99_trim.sql)
+        run: psql "postgresql://boba:boba@localhost:5433/boba" -v ON_ERROR_STOP=1 -f db/init/99_trim.sql
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Migrate + schema-contract check
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+      - name: Tests
+        run: uv run pytest -q

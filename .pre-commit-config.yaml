@@ -1,0 +1,16 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: alembic-check
+        name: alembic check (models vs migrations)
+        entry: uv run alembic check
+        language: system
+        pass_filenames: false
+        files: '^(boba/models\.py|migrations/)'

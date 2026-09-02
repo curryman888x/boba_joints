@@ -34,7 +34,9 @@ import time
 import pandas as pd
 import requests
 
-from boba.config import BOBA_NAME_PATTERN, DATA_DIR, DOHMH_NULL_DATE, DOHMH_SOCRATA_BASE
+from boba.config import BOBA_NAME_PATTERN, DOHMH_NULL_DATE, DOHMH_SOCRATA_BASE, data_dir
+
+DATA_DIR = data_dir()
 
 pd.set_option("display.max_columns", 40)
 pd.set_option("display.width", 160)
@@ -50,13 +52,45 @@ CACHE = DATA_DIR / "dohmh_boba_candidates.parquet"
 
 # %%
 LIKE_TERMS = [
-    "BOBA", "BUBBLE TEA", "BUBBLE T", "MILK TEA", "MILKTEA", "PEARL TEA", "TAPIOCA",
-    "KUNG FU TEA", "GONG CHA", "CHATIME", "SHARETEA", "SHARE TEA", "TIGER SUGAR",
-    "HAPPY LEMON", "YI FANG", "XING FU TANG", "MACHI MACHI", "THE ALLEY", "TEN REN",
-    "VIVI", "MEET FRESH", "COCO FRESH", "QUICKLY", "COMEBUY", "TASTEA", "OMOMO",
-    "BOBA GUYS", "TP TEA", "CHA ", "MOGE TEE", "POSSMEI", "WANPO", "TRUEDAN",
+    "BOBA",
+    "BUBBLE TEA",
+    "BUBBLE T",
+    "MILK TEA",
+    "MILKTEA",
+    "PEARL TEA",
+    "TAPIOCA",
+    "KUNG FU TEA",
+    "GONG CHA",
+    "CHATIME",
+    "SHARETEA",
+    "SHARE TEA",
+    "TIGER SUGAR",
+    "HAPPY LEMON",
+    "YI FANG",
+    "XING FU TANG",
+    "MACHI MACHI",
+    "THE ALLEY",
+    "TEN REN",
+    "VIVI",
+    "MEET FRESH",
+    "COCO FRESH",
+    "QUICKLY",
+    "COMEBUY",
+    "TASTEA",
+    "OMOMO",
+    "BOBA GUYS",
+    "TP TEA",
+    "CHA ",
+    "MOGE TEE",
+    "POSSMEI",
+    "WANPO",
+    "TRUEDAN",
 ]
-CUISINES = ["Coffee/Tea", "Juice, Smoothies, Fruit Salads", "Bottled beverages, including water, sodas, juices, etc."]
+CUISINES = [
+    "Coffee/Tea",
+    "Juice, Smoothies, Fruit Salads",
+    "Bottled beverages, including water, sodas, juices, etc.",
+]
 
 where = " OR ".join([f"upper(dba) like '%{t}%'" for t in LIKE_TERMS])
 where += " OR cuisine_description in(" + ",".join(f"'{c}'" for c in CUISINES) + ")"
@@ -127,7 +161,9 @@ print(boba.drop_duplicates("camis")["dba"].str.upper().value_counts().head(40))
 
 # %%
 # Eyeball: are these really boba shops? Any obvious false positives to exclude?
-sample = boba.drop_duplicates("camis")[["camis", "dba", "cuisine_description", "boro", "building", "street", "zipcode"]]
+sample = boba.drop_duplicates("camis")[
+    ["camis", "dba", "cuisine_description", "boro", "building", "street", "zipcode"]
+]
 sample.sample(min(30, len(sample)), random_state=0)
 
 # %% [markdown]
@@ -140,7 +176,12 @@ print(boba["action"].value_counts(dropna=False))
 closed = boba[boba["action"].str.contains("Closed", case=False, na=False)]
 reopened = boba[boba["action"].str.contains("re-opened", case=False, na=False)]
 print("\nrows with a 'Closed' action:", len(closed), "| distinct CAMIS:", closed["camis"].nunique())
-print("rows with a 're-opened' action:", len(reopened), "| distinct CAMIS:", reopened["camis"].nunique())
+print(
+    "rows with a 're-opened' action:",
+    len(reopened),
+    "| distinct CAMIS:",
+    reopened["camis"].nunique(),
+)
 closed[["camis", "dba", "inspection_date", "action"]].sort_values("inspection_date").head(20)
 
 # %% [markdown]
@@ -169,7 +210,10 @@ print("\nfirst-inspection year distribution (proxy for 'opened'):")
 print(per_camis["first_insp_year"].value_counts().sort_index())
 
 # %%
-print("boba CAMIS whose FIRST inspection is 2020 or later:", (per_camis["first_insp_year"] >= 2020).sum())
+print(
+    "boba CAMIS whose FIRST inspection is 2020 or later:",
+    (per_camis["first_insp_year"] >= 2020).sum(),
+)
 print("boba CAMIS ever flagged Closed:", per_camis["ever_closed"].sum())
 
 CUTOFF = pd.Timestamp.today() - pd.Timedelta(days=550)

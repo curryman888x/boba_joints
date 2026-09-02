@@ -86,7 +86,9 @@ from __future__ import annotations
 import geopandas as gpd
 import pandas as pd
 
-from boba.config import BOBA_NAME_PATTERN, DATA_DIR
+from boba.config import BOBA_NAME_PATTERN, data_dir
+
+DATA_DIR = data_dir()
 
 pd.set_option("display.width", 140)
 pd.set_option("display.max_colwidth", 50)
@@ -140,7 +142,9 @@ if d_path.exists():
     print(f"earliest inspection    : {boba['inspection_date'].min().date()}")
     print(f"CAMIS ever force-closed : {int(per_camis['ever_closed'].sum())}")
     cut = pd.Timestamp.today() - pd.Timedelta(days=550)
-    print(f"silent >18mo (proxy)   : {int(((per_camis['last_insp'] < cut) & ~per_camis['ever_closed']).sum())}")
+    print(
+        f"silent >18mo (proxy)   : {int(((per_camis['last_insp'] < cut) & ~per_camis['ever_closed']).sum())}"
+    )
     print("\nfirst-inspection year (opening proxy):")
     print(per_camis["first_insp"].dt.year.value_counts().sort_index().to_string())
 else:
