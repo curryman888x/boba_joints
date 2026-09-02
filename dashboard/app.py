@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-import altair as alt
 import pandas as pd
-import pydeck as pdk
+import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 
@@ -16,11 +15,9 @@ st.set_page_config(page_title="NYC boba joints", page_icon="🧋", layout="wide"
 THIS_YEAR = dt.date.today().year
 SINCE = 2022
 
-STATUS_COLOR = {
-    "open": [38, 166, 154, 180],
-    "closed": [229, 115, 115, 210],
-    "unknown": [144, 164, 174, 150],
-}
+# plotly legends toggle categories on click, so colour is the interactive filter
+STATUS_COLOR = {"open": "#26a69a", "closed": "#e57373", "unknown": "#b0bec5"}
+KIND_COLOR = {"opened": "#26a69a", "closed": "#e57373"}
 ALL_IDENT = ["overture_category", "both", "name_pattern", "propagated"]
 
 
@@ -29,7 +26,7 @@ def load_shops() -> pd.DataFrame:
     return pd.read_sql(
         text(
             """
-            select s.id, s.name, s.borough, s.status, s.identified_by,
+            select s.id, s.name, s.borough, s.status, s.status_basis, s.identified_by,
                    s.opened_date, s.opened_source, s.opened_precision,
                    s.closed_date, s.closed_source,
                    (s.overture_id is not null) as has_overture,
@@ -83,6 +80,10 @@ f_status = st.sidebar.multiselect(
     "Status", ["open", "closed", "unknown"], default=["open", "closed", "unknown"]
 )
 f_brand = st.sidebar.multiselect("Brand (blank = all)", brands)
+f_verified = st.sidebar.checkbox(
+    "Open shops: DOHMH-verified only",
+    help="drop 'open' shops whose only signal is Overture's operating_status",
+)
 
 f = shops[
     shops["borough"].isin(f_boro)
@@ -91,6 +92,8 @@ f = shops[
 ]
 if f_brand:
     f = f[f["brand"].isin(f_brand)]
+if f_verified:
+    f = f[(f["status"] != "open") | (f["status_basis"] == "dohmh_active")]
 
 op = f.dropna(subset=["opened_date"])
 cl = f[(f["status"] == "closed") & f["closed_date"].notna()]
@@ -106,15 +109,17 @@ st.caption(
     "Overture Places (boba label + location) joined to NYC DOHMH inspections (the timeline). "
     "Counts are a **lower bound** — shops are identified by category/name, not a ground-truth list."
 )
-k1, k2, k3, k4 = st.columns(4)
+opn = f["status"] == "open"
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Boba shops", len(f))
-k2.metric("Open", int((f["status"] == "open").sum()))
-k3.metric("Closed", int((f["status"] == "closed").sum()))
-k4.metric("Status unknown", int((f["status"] == "unknown").sum()))
+k2.metric("Open · DOHMH-verified", int((opn & (f["status_basis"] == "dohmh_active")).sum()))
+k3.metric("Open · Overture's word", int((opn & (f["status_basis"] == "overture_open")).sum()))
+k4.metric("Closed", int((f["status"] == "closed").sum()))
+k5.metric("Unknown", int((f["status"] == "unknown").sum()))
 st.caption(
-    ":grey[**open** = a recent DOHMH inspection or Overture `operating_status=open`; "
-    "**unknown** = Overture-only, no signal either way (a stale record can't be told "
-    "from a genuinely-new shop).]"
+    ":grey[**DOHMH-verified** = inspected within ~18 months. **Overture's word** = only "
+    "Overture's `operating_status` says so — unreliable (it lags real closures). "
+    "**unknown** = no signal either way.]"
 )
 
 # --- recent activity (exact dates) --------------------------------
@@ -152,44 +157,41 @@ with tab_tl:
     tl["active (cumulative)"] = tl["net"].cumsum()
 
     long = tl.melt("year", ["opened", "closed"], "kind", "count")
-    st.altair_chart(
-        alt.Chart(long)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title=None),
-            y=alt.Y("count:Q", title="shops"),
-            color=alt.Color(
-                "kind:N",
-                scale=alt.Scale(domain=["opened", "closed"], range=["#26a69a", "#e57373"]),
-                title=None,
-            ),
-            xOffset="kind:N",
-            tooltip=["year", "kind", "count"],
-        )
-        .properties(height=300),
-        width="stretch",
+    fig = px.bar(
+        long,
+        x="year",
+        y="count",
+        color="kind",
+        barmode="group",
+        color_discrete_map=KIND_COLOR,
+        height=320,
     )
+    fig.update_layout(legend_title_text="", xaxis_title="", margin=dict(t=10, b=0))
+    st.plotly_chart(fig, width="stretch")
     st.dataframe(tl.set_index("year"), width="stretch")
 
-    st.markdown("**Every opening / closing on a date axis** (hover for the shop)")
+    st.markdown(
+        "**Every opening / closing on a date axis** — click a borough in the legend to hide it"
+    )
     ev = pd.concat(
         [
             op.assign(kind="opened", date=op["opened_date"]),
             cl.assign(kind="closed", date=cl["closed_date"]),
         ]
     )[["date", "kind", "name", "brand", "borough"]]
-    st.altair_chart(
-        alt.Chart(ev)
-        .mark_tick(thickness=2, size=24, opacity=0.75)
-        .encode(
-            x=alt.X("date:T", title=None),
-            y=alt.Y("kind:N", title=None, sort=["opened", "closed"]),
-            color=alt.Color("borough:N", legend=alt.Legend(orient="bottom")),
-            tooltip=["name", "brand", "borough", "kind", alt.Tooltip("date:T")],
-        )
-        .properties(height=150),
-        width="stretch",
+    ev["brand"] = ev["brand"].fillna("")
+    fig = px.scatter(
+        ev,
+        x="date",
+        y="kind",
+        color="borough",
+        hover_name="name",
+        hover_data={"brand": True, "date": "|%Y-%m-%d", "kind": True},
+        height=230,
     )
+    fig.update_traces(marker=dict(size=9, opacity=0.7, symbol="line-ns", line_width=2))
+    fig.update_layout(xaxis_title="", yaxis_title="", legend_title_text="", margin=dict(t=10, b=0))
+    st.plotly_chart(fig, width="stretch")
 
     yr = st.selectbox("List shops for year", years[::-1])
     d1, d2 = st.columns(2)
@@ -219,34 +221,41 @@ with tab_tl:
 
 # --- Map ---------------------------------------------------------
 with tab_map:
+    color_by = st.radio(
+        "Colour by", ["status", "status_basis", "identified_by", "borough"], horizontal=True
+    )
     m = f.dropna(subset=["lon", "lat"]).copy()
-    m["color"] = m["status"].map(STATUS_COLOR)
     m["brand"] = m["brand"].fillna("")
     m["opened"] = m["opened_date"].dt.strftime("%Y-%m-%d").fillna("—")
     m["closed"] = m["closed_date"].dt.strftime("%Y-%m-%d").fillna("—")
-    st.pydeck_chart(
-        pdk.Deck(
-            map_style="light",
-            initial_view_state=pdk.ViewState(latitude=40.72, longitude=-73.94, zoom=10.2),
-            layers=[
-                pdk.Layer(
-                    "ScatterplotLayer",
-                    m,
-                    get_position=["lon", "lat"],
-                    get_fill_color="color",
-                    get_radius=70,
-                    radius_min_pixels=3,
-                    radius_max_pixels=14,
-                    pickable=True,
-                )
-            ],
-            tooltip={
-                "text": "{name}  {brand}\n{borough} · {status}\nopened {opened} · closed {closed}"
-            },
-        )
+    fig = px.scatter_map(
+        m,
+        lat="lat",
+        lon="lon",
+        color=color_by,
+        color_discrete_map=STATUS_COLOR if color_by == "status" else {},
+        hover_name="name",
+        hover_data={
+            "brand": True,
+            "borough": True,
+            "status": True,
+            "status_basis": True,
+            "opened": True,
+            "closed": True,
+            "lat": False,
+            "lon": False,
+        },
+        map_style="open-street-map",
+        center={"lat": 40.72, "lon": -73.94},
+        zoom=10,
+        height=680,
     )
+    fig.update_traces(marker={"size": 9, "opacity": 0.8})
+    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), legend_title_text="")
+    st.plotly_chart(fig, width="stretch")
     st.caption(
-        f"{len(m)} of {len(f)} filtered shops have coordinates.  🟢 open  🔴 closed  ⚪ unknown"
+        f"{len(m)} of {len(f)} filtered shops have coordinates. "
+        "Click a legend entry to hide that group."
     )
 
 # --- Shops table ------------------------------------------------
@@ -256,6 +265,7 @@ with tab_tbl:
         "brand",
         "borough",
         "status",
+        "status_basis",
         "address",
         "opened_date",
         "opened_precision",
@@ -274,10 +284,10 @@ with tab_dq:
     with c1:
         st.subheader("How shops were identified")
         prov = f["identified_by"].value_counts().rename_axis("identified_by").reset_index(name="n")
-        st.altair_chart(
-            alt.Chart(prov)
-            .mark_bar()
-            .encode(x="n:Q", y=alt.Y("identified_by:N", sort="-x"), tooltip=["identified_by", "n"]),
+        st.plotly_chart(
+            px.bar(prov, x="n", y="identified_by", orientation="h", height=280).update_layout(
+                yaxis_title="", xaxis_title="", margin=dict(t=10, b=0)
+            ),
             width="stretch",
         )
         st.caption(
@@ -287,13 +297,21 @@ with tab_dq:
     with c2:
         st.subheader("Match score distribution")
         mt = load_matches()
-        st.altair_chart(
-            alt.Chart(mt)
-            .mark_bar()
-            .encode(x=alt.X("score:Q", bin=alt.Bin(maxbins=25)), y="count()", tooltip=["count()"]),
+        st.plotly_chart(
+            px.histogram(mt, x="score", nbins=25, height=280).update_layout(
+                yaxis_title="", margin=dict(t=10, b=0)
+            ),
             width="stretch",
         )
         st.caption(f"{len(mt)} Overture↔DOHMH matches. Low scores → review in notebook 03.")
+
+    st.subheader("What each status rests on")
+    sb = f.groupby(["status", "status_basis"]).size().reset_index(name="n")
+    st.dataframe(sb.sort_values("n", ascending=False), width="stretch", hide_index=True)
+    st.caption(
+        "`overture_open` = we're trusting Overture's `operating_status` with nothing "
+        "to corroborate it; those 'open's are the least trustworthy."
+    )
 
     st.subheader("Ingest manifest")
     st.dataframe(load_manifest(), width="stretch", hide_index=True)

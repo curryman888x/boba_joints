@@ -152,24 +152,25 @@ def _opened(est, ov) -> tuple[dt.date | None, str | None, str | None]:
     return None, None, None
 
 
-def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str]:
+def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str, str]:
+    """-> (closed_date, closed_source, status, status_basis)."""
     # --- explicit closure signals ---
     if est is not None and est.closed_flag and pd.notna(est.closed_date):
         reopened = pd.notna(est.reopened_date) and est.reopened_date >= est.closed_date
         if not reopened:
-            return est.closed_date, "dohmh_closed_by_dohmh", "closed"
+            return est.closed_date, "dohmh_closed_by_dohmh", "closed", "dohmh_closed_by_dohmh"
     if ov is not None and ov.operating_status == "permanently_closed":
         d = ov.source_update_time.date() if pd.notna(ov.source_update_time) else None
-        return d, "overture_permanently_closed", "closed"
+        return d, "overture_permanently_closed", "closed", "overture_permanently_closed"
     if est is not None and pd.notna(est.last_inspection_date):
         idle = (today - est.last_inspection_date).days
         if idle > INACTIVE_DAYS and not est.closed_flag:
-            return est.last_inspection_date, "dohmh_inactive", "closed"
-        return None, None, "open"  # inspected within ~18 months -> operating
-    # --- positive "open" signal, else we genuinely don't know ---
+            return est.last_inspection_date, "dohmh_inactive", "closed", "dohmh_inactive"
+        return None, None, "open", "dohmh_active"  # inspected within ~18 months
+    # --- positive "open" signal (Overture's word only -- unreliable), else unknown ---
     if ov is not None and ov.operating_status == "open":
-        return None, None, "open"
-    return None, None, "unknown"
+        return None, None, "open", "overture_open"
+    return None, None, "unknown", "none"
 
 
 def _identified_by(ov, est) -> str:
@@ -188,11 +189,11 @@ def _identified_by(ov, est) -> str:
 
 def _dates(est, ov, today):
     opened_d, opened_src, prec = _opened(est, ov)
-    closed_d, closed_src, status = _closed(est, ov, today)
+    closed_d, closed_src, status, basis = _closed(est, ov, today)
     # a weak opened proxy that postdates a real closure is noise -- drop it
     if opened_d and closed_d and opened_d > closed_d:
         opened_d, opened_src, prec = None, None, None
-    return opened_d, opened_src, prec, closed_d, closed_src, status
+    return opened_d, opened_src, prec, closed_d, closed_src, status, basis
 
 
 def _coord(*vals):
@@ -203,7 +204,7 @@ def _coord(*vals):
 
 
 def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
-    o_d, o_s, prec, c_d, c_s, status = _dates(est, ov, today)
+    o_d, o_s, prec, c_d, c_s, status, basis = _dates(est, ov, today)
     return {
         "name": name,
         "overture_id": oid,
@@ -218,8 +219,65 @@ def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
         "closed_date": c_d,
         "closed_source": c_s,
         "status": status,
+        "status_basis": basis,
         "identified_by": _identified_by(ov, est),
     }
+
+
+def _dedup(shops: list[dict]) -> list[dict]:
+    """Collapse near-identical rows (same normalised name, within ~60 m) -- Overture
+    carries duplicate GERS ids for the same shop. Keep the richest row."""
+    by_name: dict[str, list[dict]] = {}
+    for sh in shops:
+        key = "".join(c for c in (sh["name"] or "").lower() if c.isalnum())
+        by_name.setdefault(key, []).append(sh)
+
+    def richness(s: dict) -> tuple:
+        return (
+            s["camis"] is not None,
+            s["status"] != "unknown",
+            s["opened_date"] is not None,
+            s["overture_id"] is not None,
+        )
+
+    kept, dropped = [], 0
+    for group in by_name.values():
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+        used = [False] * len(group)
+        for i, a in enumerate(group):
+            if used[i]:
+                continue
+            cluster = [a]
+            used[i] = True
+            for j in range(i + 1, len(group)):
+                b = group[j]
+                if used[j] or None in (a["lon"], a["lat"], b["lon"], b["lat"]):
+                    continue
+                if _haversine_m(a["lon"], a["lat"], b["lon"], b["lat"]) <= 60:
+                    cluster.append(b)
+                    used[j] = True
+            best = max(cluster, key=richness)
+            best["overture_id"] = best["overture_id"] or next(
+                (c["overture_id"] for c in cluster if c["overture_id"]), None
+            )
+            best["camis"] = best["camis"] or next(
+                (c["camis"] for c in cluster if c["camis"]), None
+            )
+            kept.append(best)
+            dropped += len(cluster) - 1
+    if dropped:
+        log.info("dedup: merged %d duplicate rows", dropped)
+    return kept
+
+
+def _haversine_m(lon1, lat1, lon2, lat2) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    dlon, dlat = radians(lon2 - lon1), radians(lat2 - lat1)
+    h = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    return 2 * 6_371_000 * asin(sqrt(h))
 
 
 def run(since_year: int = SINCE_YEAR) -> None:
@@ -269,6 +327,7 @@ def run(since_year: int = SINCE_YEAR) -> None:
         )
 
     shops = _assign_boroughs(shops)
+    shops = _dedup(shops)
 
     merged = sum(1 for s in shops if s["overture_id"] and s["camis"])
     ov_only = sum(1 for s in shops if s["overture_id"] and not s["camis"])
@@ -310,6 +369,7 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
                 closed_date=r["closed_date"],
                 closed_source=r["closed_source"],
                 status=r["status"],
+                status_basis=r["status_basis"],
                 identified_by=r["identified_by"],
             )
             s.add(shop)
@@ -361,9 +421,12 @@ def _summary(df: pd.DataFrame, since_year: int, today: dt.date) -> None:
     log.info("year   opened  closed   net")
     for y in years:
         log.info("%d   %6d  %6d  %+4d", y, op[y], cl[y], op[y] - cl[y])
+    opn = d["status"] == "open"
     log.info(
-        "currently: %d open, %d closed, %d unknown",
-        (d["status"] == "open").sum(),
+        "currently: %d open (%d DOHMH-verified, %d Overture's word only), %d closed, %d unknown",
+        opn.sum(),
+        (opn & (d["status_basis"] == "dohmh_active")).sum(),
+        (opn & (d["status_basis"] == "overture_open")).sum(),
         (d["status"] == "closed").sum(),
         (d["status"] == "unknown").sum(),
     )

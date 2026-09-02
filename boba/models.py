@@ -248,6 +248,11 @@ class BobaShop(Base):
             "identified_by in ('overture_category', 'name_pattern', 'both', 'propagated')",
             name="identified_by",
         ),
+        CheckConstraint(
+            "status_basis in ('dohmh_active', 'overture_open', 'dohmh_closed_by_dohmh', "
+            "'dohmh_inactive', 'overture_permanently_closed', 'none')",
+            name="status_basis",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -266,6 +271,9 @@ class BobaShop(Base):
     closed_date: Mapped[date | None] = mapped_column(Date)
     closed_source: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String, index=True)  # open | closed | unknown
+    # what the status rests on: dohmh_active | overture_open | dohmh_closed_by_dohmh
+    #   | dohmh_inactive | overture_permanently_closed | none
+    status_basis: Mapped[str | None] = mapped_column(String, index=True)
     # how this shop was identified as boba: overture_category | name_pattern | both | propagated
     identified_by: Mapped[str | None] = mapped_column(String, index=True)
     notes: Mapped[str | None] = mapped_column(String)

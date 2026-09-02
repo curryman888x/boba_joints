@@ -26,7 +26,7 @@ packages = ["boba"]
 
 [dependency-groups]
 dashboard = [
-    "pydeck>=0.9.3",
+    "plotly>=7.0.0",
     "streamlit>=1.63.0",
 ]
 dev = [
