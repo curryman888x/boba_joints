@@ -1,0 +1,15 @@
+.git
+.venv
+data
+__pycache__
+**/__pycache__
+*.pyc
+.env
+.pytest_cache
+.ruff_cache
+notebooks
+migrations
+tests
+docs
+*.md
+!README.md

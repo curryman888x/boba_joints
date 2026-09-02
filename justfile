@@ -66,8 +66,13 @@ fmt:
 test:
     uv run pytest -q
 
-# Launch the Streamlit dashboard
+# Build + serve the dashboard in a container at http://localhost:8501
 dashboard:
+    docker compose up -d --build dashboard
+    @echo "dashboard: http://localhost:8501"
+
+# Serve the dashboard from the host instead (no container build)
+dashboard-local:
     uv run --group dashboard streamlit run dashboard/app.py
 
 # --- pipeline ---------------------------------------------------------

@@ -19,5 +19,21 @@ services:
       retries: 30
       start_period: 30s
 
+  dashboard:
+    build: .
+    container_name: boba_dashboard
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # `db` is the compose service; 5432 is its in-network port (5433 is host-only)
+      DATABASE_URL: postgresql+psycopg2://boba:boba@db:5432/boba
+    ports:
+      - "8501:8501"
+    volumes:
+      # live-reload on edits without a rebuild
+      - ./boba:/app/boba:ro
+      - ./dashboard:/app/dashboard:ro
+
 volumes:
   pgdata:
