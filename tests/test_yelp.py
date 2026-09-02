@@ -54,22 +54,22 @@ def test_is_boba_business_rescued_by_name():
 
 def test_best_prefers_high_similarity_candidate():
     cands = [
-        ("overture", "ov-1", "Gong Cha", 10.0),
-        ("overture", "ov-2", "Joe's Pizza", 5.0),
+        ("111", "Gong Cha", 10.0),
+        ("222", "Joe's Pizza", 5.0),
     ]
     cid, score = _best(cands, "Gong Cha")
-    assert cid == "ov-1"
+    assert cid == "111"
     assert score and score > 80
 
 
 def test_best_rejects_below_name_threshold():
-    cands = [("dohmh", "123", "Totally Different Deli", 5.0)]
+    cands = [("123", "Totally Different Deli", 5.0)]
     assert _best(cands, "Gong Cha") == (None, None)
 
 
 def test_best_distance_penalty_changes_score():
-    near = [("overture", "near", "Boba Guys", 5.0)]
-    far = [("overture", "far", "Boba Guys", 250.0)]
+    near = [("near", "Boba Guys", 5.0)]
+    far = [("far", "Boba Guys", 250.0)]
     assert _best(near, "Boba Guys")[1] > _best(far, "Boba Guys")[1]
 
 

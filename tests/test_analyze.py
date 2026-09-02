@@ -21,19 +21,6 @@ def est(**kw):
     return SimpleNamespace(**base)
 
 
-def ov(**kw):
-    base = dict(
-        operating_status=None,
-        source_update_time=None,
-        first_seen_release=None,
-        last_seen_release=None,
-        is_bubble_tea=False,
-        name=None,
-    )
-    base.update(kw)
-    return SimpleNamespace(**base)
-
-
 def yb(**kw):
     base = dict(name=None, yelp_is_closed=None)
     base.update(kw)
@@ -43,16 +30,13 @@ def yb(**kw):
 # --- _first_seen ----------------------------------------------------
 
 
-def test_first_seen_prefers_dohmh_first_inspection():
+def test_first_seen_is_dohmh_first_inspection():
     d = dt.date(2023, 4, 1)
-    assert _first_seen(est(first_inspection_date=d), ov()) == (d, "dohmh_first_inspection")
+    assert _first_seen(est(first_inspection_date=d)) == (d, "dohmh_first_inspection")
 
 
-def test_first_seen_uses_overture_release_only_across_two_ingests():
-    o1 = ov(first_seen_release="2026-08-19.0", last_seen_release="2026-08-19.0")
-    assert _first_seen(None, o1) == (None, None)  # single ingest -> no signal
-    o2 = ov(first_seen_release="2026-07-22.0", last_seen_release="2026-08-19.0")
-    assert _first_seen(None, o2) == (dt.date(2026, 7, 22), "overture_release")
+def test_first_seen_none_without_a_camis():
+    assert _first_seen(None) == (None, None)
 
 
 # --- _closed / status_basis ---------------------------------------
@@ -60,7 +44,7 @@ def test_first_seen_uses_overture_release_only_across_two_ingests():
 
 def test_closed_dohmh_forced_closure():
     d = dt.date(2025, 2, 3)
-    assert _closed(est(closed_flag=True, closed_date=d), ov(), None, TODAY) == (
+    assert _closed(est(closed_flag=True, closed_date=d), None, TODAY) == (
         d,
         "dohmh_closed_by_dohmh",
         "closed",
@@ -75,78 +59,57 @@ def test_closed_reopened_is_not_closed():
         reopened_date=dt.date(2024, 3, 1),
         last_inspection_date=dt.date(2026, 6, 1),
     )
-    assert _closed(e, ov(), None, TODAY)[2] == "open"
+    assert _closed(e, None, TODAY)[2] == "open"
 
 
 def test_recent_inspection_is_open_dohmh_active():
     e = est(last_inspection_date=dt.date(2026, 6, 1))
-    assert _closed(e, ov(), None, TODAY) == (None, None, "open", "dohmh_active")
+    assert _closed(e, None, TODAY) == (None, None, "open", "dohmh_active")
 
 
 def test_long_silence_is_unknown_not_closed():
     # 18+ months without an inspection and nothing else to go on -> can't tell
     e = est(last_inspection_date=dt.date(2024, 1, 1))
-    assert _closed(e, ov(), None, TODAY) == (None, None, "unknown", "dohmh_inactive")
-
-
-def test_overture_open_is_low_trust_basis():
-    assert _closed(None, ov(operating_status="open"), None, TODAY) == (
-        None,
-        None,
-        "open",
-        "overture_open",
-    )
+    assert _closed(e, None, TODAY) == (None, None, "unknown", "dohmh_inactive")
 
 
 def test_no_signal_is_unknown_not_open():
-    assert _closed(None, ov(operating_status=None), None, TODAY) == (None, None, "unknown", "none")
-
-
-def test_overture_permanently_closed():
-    o = ov(operating_status="permanently_closed", source_update_time=dt.datetime(2026, 8, 14))
-    assert _closed(None, o, None, TODAY)[2:] == ("closed", "overture_permanently_closed")
+    assert _closed(None, None, TODAY) == (None, None, "unknown", "none")
 
 
 def test_yelp_closed_beats_a_recent_inspection():
     e = est(last_inspection_date=dt.date(2026, 6, 1))
-    assert _closed(e, ov(), yb(yelp_is_closed=True), TODAY)[2:] == ("closed", "yelp_closed")
+    assert _closed(e, yb(yelp_is_closed=True), TODAY)[2:] == ("closed", "yelp_closed")
 
 
-def test_yelp_open_outranks_overture_open():
-    o = ov(operating_status="open")
-    assert _closed(None, o, yb(yelp_is_closed=False), TODAY)[2:] == ("open", "yelp_open")
+def test_yelp_open_when_no_dohmh():
+    assert _closed(None, yb(yelp_is_closed=False), TODAY) == (None, None, "open", "yelp_open")
 
 
 def test_yelp_open_beats_dohmh_inactive():
     # long inspection silence, but Yelp is current and says open -> not "closed"
     e = est(last_inspection_date=dt.date(2024, 1, 1))
-    assert _closed(e, ov(), yb(yelp_is_closed=False), TODAY) == (None, None, "open", "yelp_open")
+    assert _closed(e, yb(yelp_is_closed=False), TODAY) == (None, None, "open", "yelp_open")
+
+
+def test_recent_inspection_outranks_yelp_open_for_the_basis():
+    e = est(last_inspection_date=dt.date(2026, 6, 1))
+    assert _closed(e, yb(yelp_is_closed=False), TODAY) == (None, None, "open", "dohmh_active")
 
 
 # --- _identified_by ----------------------------------------------
 
 
-def test_identified_by_precedence():
-    assert (
-        _identified_by(None, ov(is_bubble_tea=True, name="Gong Cha"), est(boba_name_match=True))
-        == "both"
-    )
-    assert (
-        _identified_by(None, ov(is_bubble_tea=True, name="Random Deli"), None)
-        == "overture_category"
-    )
-    assert _identified_by(None, ov(is_bubble_tea=False, name="Kung Fu Tea"), None) == "name_pattern"
-    assert _identified_by(None, None, est(boba_name_match=True)) == "name_pattern"
-    assert (
-        _identified_by(None, ov(is_bubble_tea=False, name="Joe's"), est(boba_name_match=False))
-        == "propagated"
-    )
+def test_identified_by_yelp_vs_name():
+    assert _identified_by(yb(name="Gong Cha"), None) == "yelp_category"
+    assert _identified_by(yb(name="Gong Cha"), est(boba_name_match=True)) == "yelp_category"
+    assert _identified_by(None, est(boba_name_match=True)) == "name_pattern"
 
 
 # --- _dedup + haversine -----------------------------------------
 
 
-def _shop(name, lon, lat, camis=None, status="open", first_seen=None, oid="x"):
+def _shop(name, lon, lat, camis=None, status="open", first_seen=None, yelp_id=None):
     return {
         "name": name,
         "lon": lon,
@@ -154,8 +117,7 @@ def _shop(name, lon, lat, camis=None, status="open", first_seen=None, oid="x"):
         "camis": camis,
         "status": status,
         "first_seen_date": first_seen,
-        "overture_id": oid,
-        "yelp_id": None,
+        "yelp_id": yelp_id,
     }
 
 
@@ -164,16 +126,16 @@ def test_haversine_metres_roughly_right():
     assert 100 < _haversine_m(-73.98, 40.75, -73.98, 40.751) < 120
 
 
-def test_dedup_merges_same_name_within_60m_keeps_richest():
-    a = _shop("Gong Cha", -73.9800, 40.7500, oid="a")
-    b = _shop("GONG CHA", -73.98005, 40.75002, camis="123", first_seen=dt.date(2023, 1, 1), oid="b")
+def test_dedup_merges_same_name_within_60m_keeps_richest_and_unions_ids():
+    a = _shop("Gong Cha", -73.9800, 40.7500, yelp_id="y-1")
+    b = _shop("GONG CHA", -73.98005, 40.75002, camis="123", first_seen=dt.date(2023, 1, 1))
     out = _dedup([a, b])
     assert len(out) == 1
-    assert out[0]["camis"] == "123"  # richer row won
-    assert out[0]["overture_id"] in {"a", "b"}
+    assert out[0]["camis"] == "123"  # richer row (has a CAMIS + date) won
+    assert out[0]["yelp_id"] == "y-1"  # ...but the Yelp id was merged onto it
 
 
 def test_dedup_keeps_distinct_locations():
-    a = _shop("Come Buy", -73.997, 40.7376, oid="a")
-    b = _shop("Come Buy", -73.987, 40.7448, oid="b")  # ~1.2 km away
+    a = _shop("Come Buy", -73.997, 40.7376)
+    b = _shop("Come Buy", -73.987, 40.7448)  # ~1.2 km away
     assert len(_dedup([a, b])) == 2

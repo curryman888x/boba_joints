@@ -18,9 +18,9 @@
 # **sampling and hand-labelling**. Each section: generate a CSV, you fill the
 # blank column, re-run the recompute cell.
 #
-# Discovery is Yelp's `bubbletea` category first, then Overture's `bubble_tea`
-# tag, then a name regex on Overture / DOHMH. **Section 0** shows how much each
-# source contributes; sections 1-3 probe recall and precision of the tail.
+# Discovery is Yelp's `bubbletea` category first, then a name regex on the DOHMH
+# `dba` for shops Yelp doesn't list. **Section 0** shows how much each source
+# contributes; sections 1-2 probe recall and precision.
 #
 # The provisional numbers below use a rough auto-label so there's something to
 # look at immediately -- **replace them by editing `data/*.csv` and re-running.**
@@ -58,19 +58,18 @@ RANDOM_STATE = 7
 # ## 0. Source overlap — who finds what
 #
 # Each `boba_shops` row carries `identified_by` (how it entered the set) and which
-# source ids it resolved to. This is the live "recall" picture now that Yelp is
-# primary: how many shops would we lose without each source.
+# source ids it resolved to. This is the live "recall" picture: how many shops
+# would we lose without each source.
 
 # %%
 overlap = pd.read_sql(
     text(
         """
         select identified_by,
-               count(*)                                              as shops,
-               count(*) filter (where yelp_id  is not null)          as has_yelp,
-               count(*) filter (where overture_id is not null)       as has_overture,
-               count(*) filter (where camis    is not null)          as has_dohmh,
-               count(*) filter (where first_seen_date is not null)   as has_date
+               count(*)                                             as shops,
+               count(*) filter (where yelp_id is not null)          as has_yelp,
+               count(*) filter (where camis   is not null)          as has_dohmh,
+               count(*) filter (where first_seen_date is not null)  as has_date
         from boba_shops
         group by identified_by
         order by shops desc
@@ -81,12 +80,16 @@ overlap = pd.read_sql(
 print(overlap.to_string(index=False))
 print(f"\ntotal shops: {overlap['shops'].sum()}")
 print(
-    "Yelp-only (no Overture, no CAMIS):",
+    "Yelp-only (no DOHMH match):",
     pd.read_sql(
-        text(
-            "select count(*) from boba_shops "
-            "where yelp_id is not null and overture_id is null and camis is null"
-        ),
+        text("select count(*) from boba_shops where yelp_id is not null and camis is null"),
+        engine,
+    ).iat[0, 0],
+)
+print(
+    "DOHMH-only (not in Yelp):",
+    pd.read_sql(
+        text("select count(*) from boba_shops where camis is not null and yelp_id is null"),
         engine,
     ).iat[0, 0],
 )
@@ -96,7 +99,7 @@ print(
 #
 # DOHMH `cuisine_description = 'Coffee/Tea'` is the bounded universe a boba shop
 # would sit in. Sample it, label which are really boba, and see what fraction our
-# pipeline (name regex OR a spatial match) captured.
+# pipeline (name regex OR linked to a Yelp `bubbletea` business) captured.
 
 # %%
 coffee_tea = pd.read_sql(
@@ -104,14 +107,14 @@ coffee_tea = pd.read_sql(
         """
         select distinct e.camis, e.dba, e.boro, e.building, e.street, e.zipcode,
                e.boba_name_match,
-               exists (select 1 from place_matches m where m.camis = e.camis) as matched
+               exists (select 1 from yelp_matches m where m.camis = e.camis) as yelp_linked
         from dohmh_establishments e
         where e.cuisine_description = 'Coffee/Tea'
         """
     ),
     engine,
 )
-coffee_tea["our_hit"] = coffee_tea["boba_name_match"] | coffee_tea["matched"]
+coffee_tea["our_hit"] = coffee_tea["boba_name_match"] | coffee_tea["yelp_linked"]
 print(f"Coffee/Tea establishments loaded: {len(coffee_tea)}")
 print(f"  our pipeline flags {int(coffee_tea['our_hit'].sum())} as boba")
 
@@ -169,103 +172,53 @@ if fn:
     print(labelled.loc[truth & ~hit, ["camis", "dba", "street"]].to_string(index=False))
 
 # %% [markdown]
-# ## 2. Precision of `place_matches` — the uncertain tail
+# ## 2. Precision of the `name_pattern` tail
 #
-# Matches with a weak name score or a distance-only method. Fill `ok` (y/n).
+# `yelp_category` shops rest on Yelp's hand curation (treated as the baseline).
+# The risky rows are `name_pattern` — a boba-named DOHMH permit with no Yelp
+# listing; the regex can misfire ("THE ALLEY PIZZA LOUNGE"). Fill `is_boba` (y/n).
 
 # %%
 tail = pd.read_sql(
     text(
         """
-        select m.overture_id, m.camis, o.name as overture_name, e.dba,
-               round(m.score::numeric, 0) as score,
-               round(m.name_similarity::numeric, 0) as name_sim,
-               round(m.distance_m::numeric, 0) as dist_m, m.method
-        from place_matches m
-        join overture_places o on o.id = m.overture_id
-        join dohmh_establishments e on e.camis = m.camis
-        where m.name_similarity < 82 or m.method = 'name_dist'
-        order by m.name_similarity
+        select id, name, borough, status, status_basis
+        from boba_shops
+        where identified_by = 'name_pattern'
         """
     ),
     engine,
 )
-review_path = DATA / "match_review.csv"
-if review_path.exists():
-    review = pd.read_csv(review_path, dtype={"camis": str})
-    print(f"loaded {review_path.name} ({review['ok'].notna().sum()} labelled)")
+set_path = DATA / "name_pattern_review.csv"
+if set_path.exists():
+    review = pd.read_csv(set_path)
+    print(f"loaded {set_path.name} ({review['is_boba'].notna().sum()} labelled)")
 else:
-    review = tail.copy()
-    review["ok"] = (review["name_sim"] >= 72) | (review["dist_m"] <= 20)  # provisional
-    review["ok"] = review["ok"].map({True: "y", False: "n"})
-    review.to_csv(review_path, index=False)
-    print(f"wrote {review_path} -- verify the `ok` column")
+    review = tail.sample(min(40, len(tail)), random_state=RANDOM_STATE).copy()
+    review["is_boba"] = review["name"].map(
+        lambda n: "n" if _NOT_FOOD.search(n or "") else ("y" if _NAME_RE.search(n or "") else "")
+    )
+    review.to_csv(set_path, index=False)
+    print(f"wrote {set_path} -- fill `is_boba` (y/n)")
 review
 
 # %%
-r = review[review["ok"].isin(["y", "n"])]
-good = int(r["ok"].eq("y").sum())
-print(f"match tail: {len(review)} rows, {len(r)} labelled")
-print(f"tail precision = {good / len(r):.0%}" if len(r) else "nothing labelled")
-print(f"total matches: kept {len(review)} of the tail; rejects would be {len(r) - good}")
-if (r["ok"] == "n").any():
-    print("\nREJECTS (feed back as overrides later):")
-    print(r.loc[r["ok"] == "n", ["overture_name", "dba", "score", "dist_m"]].to_string(index=False))
-
-# %% [markdown]
-# ## 3. Precision of the boba set itself
-#
-# The non-Yelp tail is the risky part: Overture-category shops can be mis-tagged
-# (a burger place tagged `bubble_tea`); name-pattern shops can be regex false
-# positives. `yelp_category` is excluded here -- Yelp's curation is the baseline
-# we're comparing against. Fill `is_boba` (y/n).
-
-# %%
-shops = pd.read_sql(
-    text(
-        """
-        select id, name, borough, identified_by, status
-        from boba_shops
-        where identified_by in ('overture_category', 'both', 'name_pattern', 'propagated')
-        """
-    ),
-    engine,
-)
-set_path = DATA / "boba_set_review.csv"
-if set_path.exists():
-    review3 = pd.read_csv(set_path)
-    print(f"loaded {set_path.name} ({review3['is_boba'].notna().sum()} labelled)")
+r = review[review["is_boba"].isin(["y", "n"])]
+if len(r):
+    print(f"name_pattern tail: {len(review)} rows, {len(r)} labelled")
+    print(f"precision = {r['is_boba'].eq('y').mean():.0%}   (n={len(r)})")
+    if (r["is_boba"] == "n").any():
+        print("\nNOT boba:")
+        print(r.loc[r["is_boba"] == "n", ["name", "status"]].to_string(index=False))
 else:
-    review3 = pd.concat(
-        [
-            g.sample(min(30, len(g)), random_state=RANDOM_STATE)
-            for _, g in shops.groupby("identified_by")
-        ],
-        ignore_index=True,
-    )
-    review3["is_boba"] = review3["name"].map(
-        lambda n: "n" if _NOT_FOOD.search(n or "") else ("y" if _NAME_RE.search(n or "") else "")
-    )
-    review3.to_csv(set_path, index=False)
-    print(f"wrote {set_path} -- fill `is_boba` (y/n)")
-review3
-
-# %%
-r3 = review3[review3["is_boba"].isin(["y", "n"])]
-print("precision by identified_by (labelled rows only):")
-for k, g in r3.groupby("identified_by"):
-    print(f"  {k:18s} {g['is_boba'].eq('y').mean():.0%}   (n={len(g)})")
-if (r3["is_boba"] == "n").any():
-    print("\nNOT boba:")
-    print(r3.loc[r3["is_boba"] == "n", ["name", "identified_by"]].to_string(index=False))
+    print("nothing labelled yet")
 
 # %% [markdown]
 # ## Findings
 #
 # Paste the confirmed numbers into `docs/methodology.md`:
 #
-# - source overlap: Yelp-only ___, Overture-only ___, DOHMH-only ___
+# - source overlap: Yelp-only ___, DOHMH-only ___
 # - recall (Coffee/Tea universe): ___%  (CI ___)
-# - identification precision: overture_category ___%, name_pattern ___%
-# - match-tail precision: ___%
-# - concrete rejects to override: ___
+# - name_pattern precision: ___%
+# - concrete rejects to drop: ___

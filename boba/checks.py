@@ -13,29 +13,6 @@ log = get_logger("boba.checks")
 
 INVARIANTS: list[tuple[str, str]] = [
     (
-        "overture_places.geom is never null",
-        "select count(*) from overture_places where geom is null",
-    ),
-    (
-        "overture_places.confidence in [0,1]",
-        "select count(*) from overture_places "
-        "where confidence is not null and (confidence < 0 or confidence > 1)",
-    ),
-    (
-        "place_matches.overture_id resolves",
-        "select count(*) from place_matches m "
-        "left join overture_places p on p.id = m.overture_id where p.id is null",
-    ),
-    (
-        "place_matches.camis resolves",
-        "select count(*) from place_matches m "
-        "left join dohmh_establishments e on e.camis = m.camis where e.camis is null",
-    ),
-    (
-        "place_matches.score in [0,100]",
-        "select count(*) from place_matches where score is not null and (score < 0 or score > 100)",
-    ),
-    (
         "dohmh closed_flag implies closed_date",
         "select count(*) from dohmh_establishments where closed_flag and closed_date is null",
     ),
@@ -61,8 +38,7 @@ INVARIANTS: list[tuple[str, str]] = [
     ),
     (
         "boba_shops has at least one source id",
-        "select count(*) from boba_shops "
-        "where overture_id is null and camis is null and yelp_id is null",
+        "select count(*) from boba_shops where camis is null and yelp_id is null",
     ),
     (
         "boba_shops closed_date only when status = closed",
@@ -74,8 +50,10 @@ INVARIANTS: list[tuple[str, str]] = [
         "left join yelp_businesses b on b.yelp_id = m.yelp_id where b.yelp_id is null",
     ),
     (
-        "yelp_matches link to at least one side",
-        "select count(*) from yelp_matches where overture_id is null and camis is null",
+        "yelp_matches.camis resolves",
+        "select count(*) from yelp_matches m "
+        "left join dohmh_establishments e on e.camis = m.camis "
+        "where m.camis is not null and e.camis is null",
     ),
     (
         "every ok ingest_run recorded a kept_count",

@@ -1,4 +1,4 @@
-"""Validation contracts for the Overture and DOHMH sources, plus the ingest manifest."""
+"""Validation contracts for the Yelp and DOHMH sources, plus the ingest manifest."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
-    field_validator,
     model_validator,
 )
 from sqlalchemy import select
@@ -31,12 +30,6 @@ except ImportError:  # older pandera
 
 class ContractViolation(ValueError):
     """A source record or frame broke an assumption the pipeline relies on."""
-
-
-# --- Overture place record ------------------------------------------------
-
-KNOWN_OPERATING_STATUS = frozenset({"open", "permanently_closed", "closed_temporarily"})
-_NYC_SANITY = (-74.30, 40.45, -73.65, 40.95)  # min_lon, min_lat, max_lon, max_lat
 
 
 def _is_missing(v: Any) -> bool:
@@ -62,109 +55,6 @@ def _as_list(v: Any) -> list:
     if isinstance(v, Sequence):
         return list(v)
     return [v]
-
-
-def categories_of(v: Any) -> list[str]:
-    """Primary + alternate category strings from an Overture `categories` struct."""
-    if not isinstance(v, Mapping):
-        return []
-    return [c for c in [v.get("primary") or v.get("main"), *_as_list(v.get("alternate"))] if c]
-
-
-def _first_dict(seq: Any) -> dict:
-    for item in _as_list(seq):
-        if isinstance(item, Mapping):
-            return dict(item)
-    return {}
-
-
-def _max_source_time(sources: Any) -> datetime | None:
-    times = []
-    for s in _as_list(sources):
-        t = _as_dict(s).get("update_time")
-        if t in (None, ""):
-            continue
-        try:
-            ts = pd.Timestamp(t)
-        except (ValueError, TypeError):
-            continue
-        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
-        times.append(ts.to_pydatetime())
-    return max(times) if times else None
-
-
-class OverturePlaceRecord(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: str
-    name: str | None = None
-    category_primary: str | None = None
-    categories_all: list[str] = Field(default_factory=list)
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    operating_status: str | None = None
-    addr_freeform: str | None = None
-    locality: str | None = None
-    region: str | None = None
-    postcode: str | None = None
-    brand: str | None = None
-    source_update_time: datetime | None = None
-    lon: float
-    lat: float
-
-    @model_validator(mode="before")
-    @classmethod
-    def _flatten(cls, data: Any) -> Any:
-        if not isinstance(data, Mapping):
-            return data
-        d = {k: (None if _is_missing(v) else v) for k, v in dict(data).items()}
-
-        names = _as_dict(d.get("names"))
-        d.setdefault("name", names.get("primary") or names.get("common"))
-
-        if "categories" not in data:
-            raise ContractViolation(
-                f"Overture record {d.get('id')!r} is missing the `categories` field entirely"
-            )
-        cats = _as_dict(d.get("categories"))  # null value is fine: place with no category
-        d["category_primary"] = cats.get("primary") or cats.get("main")
-        d["categories_all"] = categories_of(cats)
-
-        addr = _first_dict(d.get("addresses"))
-        d["addr_freeform"] = addr.get("freeform")
-        d["locality"] = addr.get("locality")
-        d["region"] = addr.get("region")
-        d["postcode"] = addr.get("postcode")
-
-        brand = _as_dict(d.get("brand"))
-        d["brand"] = _as_dict(brand.get("names")).get("primary") or brand.get("wikidata") or None
-
-        d["source_update_time"] = _max_source_time(d.get("sources"))
-        return d
-
-    @field_validator("operating_status")
-    @classmethod
-    def _known_status(cls, v: str | None) -> str | None:
-        if v is not None and v not in KNOWN_OPERATING_STATUS:
-            raise ContractViolation(
-                f"unknown Overture operating_status {v!r} (known: {sorted(KNOWN_OPERATING_STATUS)})"
-            )
-        return v
-
-    @model_validator(mode="after")
-    def _inside_nyc(self) -> OverturePlaceRecord:
-        lo_lon, lo_lat, hi_lon, hi_lat = _NYC_SANITY
-        if not (lo_lon <= self.lon <= hi_lon and lo_lat <= self.lat <= hi_lat):
-            raise ContractViolation(
-                f"place {self.id} at ({self.lon:.4f}, {self.lat:.4f}) is outside the NYC box"
-            )
-        return self
-
-
-def parse_overture_place(raw: Mapping[str, Any]) -> OverturePlaceRecord:
-    try:
-        return OverturePlaceRecord.model_validate(raw)
-    except ValidationError as exc:
-        raise ContractViolation(str(exc)) from exc
 
 
 # --- Yelp business record ---------------------------------------------

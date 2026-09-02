@@ -1,13 +1,12 @@
 """Database schema.
 
   * reference       -- boroughs (seeded), ingest_runs (manifest)
-  * raw ingest      -- overture_places, dohmh_establishments, dohmh_inspections
-  * discovery       -- yelp_businesses (primary), overture_places, dohmh_*
-  * linking         -- place_matches, yelp_matches
+  * discovery       -- yelp_businesses (primary), dohmh_establishments (+ inspections)
+  * linking         -- yelp_matches (Yelp business -> CAMIS)
   * derived         -- boba_shops
 
-`boba_shops` is truncated and rebuilt by boba/analyze.py from the raw + linking
-tables; those are the source of truth.
+`boba_shops` is truncated and rebuilt by boba/analyze.py from the discovery +
+linking tables; those are the source of truth.
 """
 
 from __future__ import annotations
@@ -72,52 +71,18 @@ class IngestRun(Base):
     __table_args__ = (CheckConstraint("status in ('running', 'ok', 'failed')", name="status"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    # overture | dohmh | match | yelp_discover | yelp_link | analyze
+    # dohmh | yelp_discover | yelp_link | analyze
     source: Mapped[str] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String, server_default="running")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    source_version: Mapped[str | None] = mapped_column(String)  # e.g. Overture release id
+    source_version: Mapped[str | None] = mapped_column(String)  # e.g. dohmh "full"
     row_count: Mapped[int | None] = mapped_column(Integer)  # rows pulled from source
     kept_count: Mapped[int | None] = mapped_column(Integer)  # rows after the boba filter
     min_date: Mapped[date | None] = mapped_column(Date)  # source coverage floor
     max_date: Mapped[date | None] = mapped_column(Date)  # source coverage ceiling
     detail: Mapped[dict | None] = mapped_column(JSONB)  # free-form manifest extras
     error: Mapped[str | None] = mapped_column(String)
-
-
-class OverturePlace(Base):
-    """Latest-release Overture `place` records inside the NYC bbox that look like boba shops."""
-
-    __tablename__ = "overture_places"
-    __table_args__ = (
-        CheckConstraint(
-            "confidence is null or (confidence >= 0 and confidence <= 1)",
-            name="confidence",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # GERS id
-    name: Mapped[str | None] = mapped_column(String)
-    category_primary: Mapped[str | None] = mapped_column(String, index=True)
-    categories: Mapped[dict | None] = mapped_column(JSONB)
-    brand: Mapped[str | None] = mapped_column(String)
-    confidence: Mapped[float | None] = mapped_column(Float)
-    operating_status: Mapped[str | None] = mapped_column(String, index=True)
-    addr_freeform: Mapped[str | None] = mapped_column(String)
-    locality: Mapped[str | None] = mapped_column(String)
-    region: Mapped[str | None] = mapped_column(String)
-    postcode: Mapped[str | None] = mapped_column(String)
-    website: Mapped[str | None] = mapped_column(String)
-    phone: Mapped[str | None] = mapped_column(String)
-    source_update_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    overture_release: Mapped[str | None] = mapped_column(String, index=True)
-    first_seen_release: Mapped[str | None] = mapped_column(String)
-    last_seen_release: Mapped[str | None] = mapped_column(String)
-    geom: Mapped[object] = mapped_column(_point(nullable=False))
-    ingested_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
 
 
 class DohmhEstablishment(Base):
@@ -192,37 +157,11 @@ class DohmhInspection(Base):
     establishment: Mapped[DohmhEstablishment] = relationship(back_populates="inspections")
 
 
-class PlaceMatch(Base):
-    """Candidate link between an Overture place and a DOHMH CAMIS."""
-
-    __tablename__ = "place_matches"
-    __table_args__ = (
-        UniqueConstraint("overture_id", "camis", name="uq_place_match"),
-        CheckConstraint(
-            "score is null or (score >= 0 and score <= 100)",
-            name="score",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    overture_id: Mapped[str] = mapped_column(
-        ForeignKey("overture_places.id", ondelete="CASCADE"), index=True
-    )
-    camis: Mapped[str] = mapped_column(
-        ForeignKey("dohmh_establishments.camis", ondelete="CASCADE"), index=True
-    )
-    score: Mapped[float | None] = mapped_column(Float)  # 0-100 blended
-    method: Mapped[str | None] = mapped_column(String)  # name_addr | name_dist | manual
-    distance_m: Mapped[float | None] = mapped_column(Float)
-    name_similarity: Mapped[float | None] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
 class BobaShop(Base):
     """Canonical merged boba shop. Dates are *evidence bounds*, not lifecycle
-    events: first_seen_date = earliest DOHMH inspection (or Overture release);
-    last_seen_date = latest such evidence; closed_date is set only on a real
-    closure signal. See docs/methodology.md."""
+    events: first_seen_date = earliest DOHMH inspection; last_seen_date = latest
+    DOHMH inspection; closed_date is set only on a real closure signal.
+    See docs/methodology.md."""
 
     __tablename__ = "boba_shops"
     __table_args__ = (
@@ -233,28 +172,22 @@ class BobaShop(Base):
             name="date_order",
         ),
         CheckConstraint(
-            "identified_by in "
-            "('yelp_category', 'overture_category', 'name_pattern', 'both', 'propagated')",
+            "identified_by in ('yelp_category', 'name_pattern')",
             name="identified_by",
         ),
         CheckConstraint(
-            "status_basis in ('dohmh_active', 'yelp_open', 'overture_open', "
-            "'yelp_closed', 'dohmh_closed_by_dohmh', 'dohmh_inactive', "
-            "'overture_permanently_closed', 'none')",
+            "status_basis in ('dohmh_active', 'yelp_open', "
+            "'yelp_closed', 'dohmh_closed_by_dohmh', 'dohmh_inactive', 'none')",
             name="status_basis",
         ),
         CheckConstraint(
-            "first_seen_source is null or first_seen_source in "
-            "('dohmh_first_inspection', 'overture_release')",
+            "first_seen_source is null or first_seen_source = 'dohmh_first_inspection'",
             name="first_seen_source",
         ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str | None] = mapped_column(String)
-    overture_id: Mapped[str | None] = mapped_column(
-        ForeignKey("overture_places.id", ondelete="SET NULL"), index=True
-    )
     camis: Mapped[str | None] = mapped_column(
         ForeignKey("dohmh_establishments.camis", ondelete="SET NULL"), index=True
     )
@@ -302,7 +235,7 @@ class YelpBusiness(Base):
 
 
 class YelpMatch(Base):
-    """One row per Yelp business: its best-matching Overture place and/or CAMIS."""
+    """One row per linked Yelp business: its best-matching DOHMH CAMIS (for dates)."""
 
     __tablename__ = "yelp_matches"
     __table_args__ = (UniqueConstraint("yelp_id", name="uq_yelp_matches_yelp_id"),)
@@ -311,12 +244,8 @@ class YelpMatch(Base):
     yelp_id: Mapped[str] = mapped_column(
         ForeignKey("yelp_businesses.yelp_id", ondelete="CASCADE"), index=True
     )
-    overture_id: Mapped[str | None] = mapped_column(
-        ForeignKey("overture_places.id", ondelete="SET NULL"), index=True
-    )
     camis: Mapped[str | None] = mapped_column(
         ForeignKey("dohmh_establishments.camis", ondelete="SET NULL"), index=True
     )
-    overture_score: Mapped[float | None] = mapped_column(Float)
     camis_score: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

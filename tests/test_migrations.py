@@ -18,7 +18,7 @@ def test_upgrade_downgrade_roundtrip(alembic_config, test_db_url):
             ).scalars()
         )
     eng.dispose()
-    assert {"overture_places", "dohmh_establishments", "boba_shops", "ingest_runs"} <= tables
+    assert {"yelp_businesses", "dohmh_establishments", "boba_shops", "ingest_runs"} <= tables
 
 
 def test_models_match_migrations(alembic_config):

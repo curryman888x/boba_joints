@@ -10,77 +10,50 @@ from boba.contracts import (
     ContractViolation,
     IngestRun,
     drift_warnings,
-    parse_overture_place,
+    parse_yelp_business,
     validate_dohmh_frame,
 )
-from boba.filters import overture_is_boba
 
 
-def _place(**over):
+def _biz(**over):
     base = {
-        "id": "gers-1",
-        "categories": {"primary": "bubble_tea", "alternate": ["cafe"]},
-        "confidence": 0.93,
-        "names": {"primary": "Gong Cha"},
-        "lon": -73.98,
-        "lat": 40.75,
+        "id": "yelp-1",
+        "name": "Gong Cha",
+        "is_closed": False,
+        "coordinates": {"longitude": -73.98, "latitude": 40.75},
+        "location": {"address1": "1 Main St", "city": "New York", "zip_code": "10002"},
+        "categories": [{"alias": "bubbletea", "title": "Bubble Tea"}],
+        "url": "https://www.yelp.com/biz/gong-cha?adjust_creative=abc",
     }
     base.update(over)
     return base
 
 
-# --- Overture record ---------------------------------------------------
+# --- Yelp business record --------------------------------------------
 
 
-def test_good_record_parses_and_is_boba():
-    rec = parse_overture_place(_place())
+def test_good_yelp_record_parses_and_flattens():
+    rec = parse_yelp_business(_biz())
+    assert rec.yelp_id == "yelp-1"
     assert rec.name == "Gong Cha"
-    assert rec.category_primary == "bubble_tea"
-    assert "cafe" in rec.categories_all
-    assert overture_is_boba(rec)
+    assert (rec.lon, rec.lat) == (-73.98, 40.75)
+    assert rec.address == "1 Main St"
+    assert rec.zip == "10002"
+    assert rec.url == "https://www.yelp.com/biz/gong-cha"  # query string stripped
 
 
-def test_null_confidence_and_status_are_allowed():
-    rec = parse_overture_place(
-        _place(confidence=None, operating_status=float("nan"), categories={"primary": None})
-    )
-    assert rec.confidence is None
-    assert rec.operating_status is None
-    assert rec.categories_all == []
-
-
-def test_missing_categories_field_is_drift():
-    raw = _place()
-    del raw["categories"]
-    with pytest.raises(ContractViolation, match="categories"):
-        parse_overture_place(raw)
-
-
-def test_confidence_out_of_range_rejected():
+def test_yelp_missing_coordinates_rejected():
+    raw = _biz()
+    del raw["coordinates"]
     with pytest.raises(ContractViolation):
-        parse_overture_place(_place(confidence=1.4))
+        parse_yelp_business(raw)
 
 
-def test_unknown_operating_status_is_drift():
-    with pytest.raises(ContractViolation, match="operating_status"):
-        parse_overture_place(_place(operating_status="franchise_paused"))
-
-
-def test_point_outside_nyc_rejected():
-    with pytest.raises(ContractViolation, match="NYC"):
-        parse_overture_place(_place(lon=-118.24, lat=34.05))
-
-
-def test_source_update_time_takes_the_max_across_sources():
-    rec = parse_overture_place(
-        _place(
-            sources=[
-                {"update_time": "2024-01-01T00:00:00Z"},
-                {"update_time": "2025-06-15"},
-            ]
-        )
+def test_yelp_categories_kept_as_dicts():
+    rec = parse_yelp_business(
+        _biz(categories=[{"alias": "coffee"}, "junk", {"alias": "bubbletea"}])
     )
-    assert rec.source_update_time.year == 2025
+    assert [c["alias"] for c in rec.categories] == ["coffee", "bubbletea"]
 
 
 # --- DOHMH frame -----------------------------------------------------

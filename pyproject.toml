@@ -4,16 +4,14 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.19.1",
-    "duckdb>=1.5.5",
     "geoalchemy2>=0.20.0",
-    "geopandas>=1.1.4",
-    "overturemaps>=1.0.2",
     "pandera[pandas]>=0.33.1",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
     "rapidfuzz>=3.14.6",
     "requests>=2.34.2",
+    "shapely>=2.0.0",
     "sqlalchemy>=2.0.52",
 ]
 
@@ -36,7 +34,6 @@ dev = [
 notebooks = [
     "jupyterlab>=4.6.3",
     "jupytext>=1.19.5",
-    "mapclassify>=2.11.0",
     "matplotlib>=3.11.1",
 ]
 

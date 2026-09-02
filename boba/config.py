@@ -22,25 +22,14 @@ def data_dir() -> Path:
 
 
 # Bounding box covering all five NYC boroughs, as (min_lon, min_lat, max_lon, max_lat).
+# Used by the Yelp adaptive-grid discovery sweep.
 NYC_BBOX = (-74.2591, 40.4774, -73.7002, 40.9162)
 
-# Overture place category values that are unambiguously boba / bubble-tea shops.
-BOBA_CATEGORIES = {"bubble_tea"}
-
-# Broader Overture categories to sweep with a name filter (a lot of boba shops are
-# tagged as generic cafes / dessert shops / juice bars).
-BOBA_FALLBACK_CATEGORIES = {
-    "cafe",
-    "coffee_shop",
-    "tea_room",
-    "desserts",
-    "smoothie_juice_bar",
-}
-
-# Name-based signal for boba shops, applied to both Overture names and DOHMH `dba`.
+# Name-based signal for boba shops, applied to Yelp names and DOHMH `dba`.
 # Yelp's `bubbletea` category is the primary discovery source; this pattern is the
-# secondary net that recovers Overture-only and DOHMH-only shops Yelp doesn't list.
-# Chain names are included because DOHMH cuisine has no "bubble tea" value.
+# secondary net -- it rescues Yelp results where `bubbletea` isn't the primary
+# category, and finds DOHMH-only shops (DOHMH cuisine has no "bubble tea" value).
+# Chain names are listed explicitly for that reason.
 # All groups non-capturing so pandas .str.contains(regex=True) doesn't warn.
 BOBA_NAME_PATTERN = (
     r"(?i)(?:"

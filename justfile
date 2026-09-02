@@ -81,26 +81,18 @@ dashboard-local:
 
 # --- pipeline ---------------------------------------------------------
 
-# Overture: download NYC `place` extract, load boba candidates
-ingest-overture:
-    uv run python -m boba.ingest.overture
-
 # DOHMH: download NYC restaurant inspections, load boba candidates + history
 ingest-dohmh:
     uv run python -m boba.ingest.dohmh
 
-# Link Overture places <-> DOHMH establishments (feeds Yelp linking + analyze)
-match:
-    uv run python -m boba.match
-
-# Yelp: discover NYC bubbletea shops (primary source) + link to Overture/DOHMH
+# Yelp: discover NYC bubbletea shops (primary source) + link to a DOHMH CAMIS
 # (needs YELP_API_KEY; search calls capped, discovery cached)
 ingest-yelp:
     uv run python -m boba.ingest.yelp
 
-# Merge sources into boba_shops + write data/boba_status.csv + year summary
+# Merge Yelp + DOHMH into boba_shops + write data/boba_status.csv + year summary
 analyze:
     uv run python -m boba.analyze
 
 # Whole pipeline from a cold start
-all: db-up migrate seed ingest-overture ingest-dohmh match ingest-yelp analyze check
+all: db-up migrate seed ingest-dohmh ingest-yelp analyze check

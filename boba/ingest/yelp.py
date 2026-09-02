@@ -4,23 +4,26 @@
 adaptively subdividing the bbox wherever a tile hits Yelp's 240-result ceiling.
 Each result carries ``is_closed`` (free current status). -> ``yelp_businesses``.
 
-``link``: match each Yelp business to its Overture place (brand/geom) and DOHMH
-CAMIS (first_seen / dates) by name + distance. -> ``yelp_matches``.
+``link``: match each Yelp business to a DOHMH CAMIS (for a first-seen date) by
+name + distance. -> ``yelp_matches``.
 
 Capped by ``--limit`` calls; ``discover`` is skipped if the last run was within
-``--max-age-days``. No-ops without ``YELP_API_KEY``.
+``--max-age-days``. The raw sweep is cached to ``data/yelp_raw_last.json`` so a
+later rate-limited run rebuilds ``yelp_businesses`` instead of wiping it.
+No-ops without ``YELP_API_KEY``.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from math import asin, cos, radians, sin, sqrt
 
 from rapidfuzz import fuzz
 from sqlalchemy import text
 
-from boba.config import NYC_BBOX, YELP_API_KEY, YELP_SEARCH_URL
+from boba.config import NYC_BBOX, YELP_API_KEY, YELP_SEARCH_URL, data_dir
 from boba.contracts import ContractViolation, ingest_run, last_successful_run, parse_yelp_business
 from boba.db import SessionLocal, engine, upsert
 from boba.filters import name_key, name_looks_like_boba
@@ -35,6 +38,9 @@ _YELP_MAX_OFFSET = 240  # Yelp returns at most 240 results per search
 _MAX_DEPTH = 5
 _LINK_RADIUS_M = 160.0
 _LINK_NAME_MIN = 60.0
+# the raw sweep, cached so a later rate-limited run (Yelp free tier is ~500
+# calls/day) can still rebuild yelp_businesses instead of wiping it
+_RAW_CACHE = "yelp_raw_last.json"
 
 
 def _haversine_m(lon1, lat1, lon2, lat2) -> float:
@@ -122,6 +128,17 @@ def discover(limit: int) -> int:
     _sweep(sess, NYC_BBOX, seen, budget)
     log.info("discovery: %d unique Yelp businesses (%d calls used)", len(seen), limit - budget[0])
 
+    cache = data_dir() / _RAW_CACHE
+    if len(seen) < 200 and cache.exists():
+        # the sweep was starved (rate limit / outage) -- rebuild from the last good one
+        cached = json.loads(cache.read_text())
+        log.warning(
+            "thin sweep (%d) -- falling back to %d cached businesses", len(seen), len(cached)
+        )
+        seen = {b["id"]: b for b in cached if b.get("id")}
+    elif len(seen) >= 200:
+        cache.write_text(json.dumps(list(seen.values())))
+
     rows, violations, off_topic = [], 0, 0
     for raw in seen.values():
         try:
@@ -183,27 +200,20 @@ def discover(limit: int) -> int:
 _CAND_SQL = text(
     """
     select y.yelp_id, y.name as y_name,
-           src, cand_id, cand_name,
-           st_distance(y.geom::geography, cand_geom::geography) as dist_m
+           e.camis as cand_id, e.dba as cand_name,
+           st_distance(y.geom::geography, e.geom::geography) as dist_m
     from yelp_businesses y
-    cross join lateral (
-        select 'overture' as src, p.id::text as cand_id, p.name as cand_name, p.geom as cand_geom
-        from overture_places p
-        where st_dwithin(p.geom::geography, y.geom::geography, :r)
-        union all
-        select 'dohmh', e.camis, e.dba, e.geom
-        from dohmh_establishments e
-        where e.geom is not null and st_dwithin(e.geom::geography, y.geom::geography, :r)
-    ) c
+    join dohmh_establishments e
+      on e.geom is not null and st_dwithin(e.geom::geography, y.geom::geography, :r)
     """
 )
 
 
 def _best(cands: list, y_name: str) -> tuple[str | None, float | None]:
-    """cands: list of (src, id, name, dist) for one side. -> (id, score)."""
+    """cands: list of (id, name, dist). -> (id, score) for the best name+distance match."""
     key = name_key(y_name)
     best_id, best = None, 0.0
-    for _src, cid, cname, dist in cands:
+    for cid, cname, dist in cands:
         sim = fuzz.token_set_ratio(key, name_key(cname))
         score = sim - min(dist / 20.0, 15.0)
         if sim >= _LINK_NAME_MIN and score > best:
@@ -218,38 +228,22 @@ def link() -> None:
 
     by_yelp: dict[str, dict] = {}
     for r in rows_raw:
-        d = by_yelp.setdefault(r.yelp_id, {"name": r.y_name, "overture": [], "dohmh": []})
-        d[r.src].append((r.src, r.cand_id, r.cand_name, r.dist_m))
+        d = by_yelp.setdefault(r.yelp_id, {"name": r.y_name, "cands": []})
+        d["cands"].append((r.cand_id, r.cand_name, r.dist_m))
 
     rows = []
     for yid, d in by_yelp.items():
-        oid, o_score = _best(d["overture"], d["name"])
-        camis, c_score = _best(d["dohmh"], d["name"])
-        if oid or camis:
-            rows.append(
-                {
-                    "yelp_id": yid,
-                    "overture_id": oid,
-                    "camis": camis,
-                    "overture_score": o_score,
-                    "camis_score": c_score,
-                }
-            )
+        camis, c_score = _best(d["cands"], d["name"])
+        if camis:
+            rows.append({"yelp_id": yid, "camis": camis, "camis_score": c_score})
+
     with SessionLocal() as s, ingest_run(s, "yelp_link") as m:
         s.execute(text("truncate yelp_matches"))
         upsert(s, YelpMatch, rows, index_elements=["yelp_id"])
         m.row_count = len(by_yelp)
         m.kept_count = len(rows)
-        m.detail = {
-            "to_overture": sum(1 for r in rows if r["overture_id"]),
-            "to_dohmh": sum(1 for r in rows if r["camis"]),
-        }
-    log.info(
-        "link: %d Yelp businesses linked (%d→Overture, %d→DOHMH)",
-        len(rows),
-        sum(1 for r in rows if r["overture_id"]),
-        sum(1 for r in rows if r["camis"]),
-    )
+        m.detail = {"to_dohmh": len(rows)}
+    log.info("link: %d Yelp businesses linked to a DOHMH CAMIS", len(rows))
 
 
 def run(limit: int = 240, max_age_days: int = 14, rediscover: bool = False) -> None:
