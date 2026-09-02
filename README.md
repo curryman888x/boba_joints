@@ -16,6 +16,12 @@ The original question was "since 2020", but the free sources don't reach that fa
 So the deliverable covers **2022 → 2026**, with confidence bands, and **2020–2021
 is an acknowledged gap**. See `notebooks/00_recap.py` for the full findings.
 
+## Why
+
+- [docs/data-sources.md](docs/data-sources.md) — why two sources, why matching, the three shop populations
+- [docs/methodology.md](docs/methodology.md) — how shops are identified and dated, and the limits
+- [docs/decisions.md](docs/decisions.md) — non-obvious infrastructure choices
+
 ## How it works
 
 ```
