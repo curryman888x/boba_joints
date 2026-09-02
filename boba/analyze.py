@@ -25,7 +25,7 @@ from boba.contracts import ingest_run
 from boba.db import SessionLocal, engine
 from boba.filters import name_looks_like_boba
 from boba.log import get_logger, setup
-from boba.models import BobaShop, StatusEvent
+from boba.models import BobaShop
 
 log = get_logger("boba.analyze")
 
@@ -142,20 +142,30 @@ def _release_date(rel: str | None) -> dt.date | None:
         return None
 
 
-def _opened(est, ov) -> tuple[dt.date | None, str | None, str | None]:
+def _first_seen(est, ov) -> tuple[dt.date | None, str | None]:
+    """Earliest *evidence* the shop existed -- NOT an opening date. DOHMH's first
+    inspection (pre-permit where available) lags the true opening by the permit
+    gap, so this is 'operating by at least this date'."""
     if est is not None and pd.notna(est.first_inspection_date):
-        # first inspection is weeks-to-months AFTER the shop opened (permit lag),
-        # so this is an upper bound on the opening date -- quarter precision.
-        return est.first_inspection_date, "dohmh_first_inspection", "quarter"
-    # first_seen_release is only meaningful once a place has persisted across
-    # >= 2 of our ingests (otherwise it's just "when we started collecting").
-    # `source_update_time` is deliberately NOT used -- it's when Overture last
-    # touched the record, which clusters in the current year and is not an opening.
+        return est.first_inspection_date, "dohmh_first_inspection"
+    # only meaningful once a place persists across >= 2 of our ingests
     if ov is not None and ov.first_seen_release and ov.first_seen_release != ov.last_seen_release:
         rel = _release_date(ov.first_seen_release)
         if rel:
-            return rel, "overture_first_release", "quarter"
-    return None, None, None
+            return rel, "overture_release"
+    return None, None
+
+
+def _last_seen(est, ov) -> dt.date | None:
+    """Latest evidence the shop existed."""
+    cands = []
+    if est is not None and pd.notna(est.last_inspection_date):
+        cands.append(est.last_inspection_date)
+    if ov is not None and ov.last_seen_release:
+        rel = _release_date(ov.last_seen_release)
+        if rel:
+            cands.append(rel)
+    return max(cands) if cands else None
 
 
 def _yelp_is_closed(est, ov):
@@ -207,12 +217,12 @@ def _identified_by(ov, est) -> str:
 
 
 def _dates(est, ov, today):
-    opened_d, opened_src, prec = _opened(est, ov)
+    first_d, first_src = _first_seen(est, ov)
+    last_d = _last_seen(est, ov)
     closed_d, closed_src, status, basis = _closed(est, ov, today)
-    # a weak opened proxy that postdates a real closure is noise -- drop it
-    if opened_d and closed_d and opened_d > closed_d:
-        opened_d, opened_src, prec = None, None, None
-    return opened_d, opened_src, prec, closed_d, closed_src, status, basis
+    if first_d and closed_d and first_d > closed_d:  # contradiction -> drop the weaker
+        first_d, first_src = None, None
+    return first_d, first_src, last_d, closed_d, closed_src, status, basis
 
 
 def _coord(*vals):
@@ -223,7 +233,7 @@ def _coord(*vals):
 
 
 def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
-    o_d, o_s, prec, c_d, c_s, status, basis = _dates(est, ov, today)
+    first_d, first_src, last_d, c_d, c_s, status, basis = _dates(est, ov, today)
     return {
         "name": name,
         "overture_id": oid,
@@ -232,9 +242,9 @@ def _shop(*, name, oid, camis, lon, lat, dohmh_boro, est, ov, today) -> dict:
         "lat": lat,
         "borough": None,  # set by _assign_boroughs
         "_dohmh_boro": dohmh_boro,
-        "opened_date": o_d,
-        "opened_source": o_s,
-        "opened_precision": prec,
+        "first_seen_date": first_d,
+        "first_seen_source": first_src,
+        "last_seen_date": last_d,
         "closed_date": c_d,
         "closed_source": c_s,
         "status": status,
@@ -255,7 +265,7 @@ def _dedup(shops: list[dict]) -> list[dict]:
         return (
             s["camis"] is not None,
             s["status"] != "unknown",
-            s["opened_date"] is not None,
+            s["first_seen_date"] is not None,
             s["overture_id"] is not None,
         )
 
@@ -374,44 +384,23 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
                 if lon is not None and lat is not None
                 else None
             )
-            shop = BobaShop(
-                name=r["name"],
-                overture_id=r["overture_id"],
-                camis=r["camis"],
-                geom=geom,
-                borough=r["borough"],
-                opened_date=r["opened_date"],
-                opened_source=r["opened_source"],
-                opened_precision=r["opened_precision"],
-                closed_date=r["closed_date"],
-                closed_source=r["closed_source"],
-                status=r["status"],
-                status_basis=r["status_basis"],
-                identified_by=r["identified_by"],
+            s.add(
+                BobaShop(
+                    name=r["name"],
+                    overture_id=r["overture_id"],
+                    camis=r["camis"],
+                    geom=geom,
+                    borough=r["borough"],
+                    first_seen_date=r["first_seen_date"],
+                    first_seen_source=r["first_seen_source"],
+                    last_seen_date=r["last_seen_date"],
+                    closed_date=r["closed_date"],
+                    closed_source=r["closed_source"],
+                    status=r["status"],
+                    status_basis=r["status_basis"],
+                    identified_by=r["identified_by"],
+                )
             )
-            s.add(shop)
-            s.flush()
-            if r["opened_date"]:
-                s.add(
-                    StatusEvent(
-                        boba_shop_id=shop.id,
-                        event_type="opened",
-                        event_date=r["opened_date"],
-                        source=r["opened_source"],
-                        confidence="high" if r["opened_precision"] == "month" else "proxy",
-                    )
-                )
-            if r["closed_date"] and r["status"] == "closed":
-                conf = "high" if r["closed_source"] == "dohmh_closed_by_dohmh" else "low"
-                s.add(
-                    StatusEvent(
-                        boba_shop_id=shop.id,
-                        event_type="closed",
-                        event_date=r["closed_date"],
-                        source=r["closed_source"],
-                        confidence=conf,
-                    )
-                )
         m.row_count = len(shops)
         m.kept_count = len(shops)
         m.detail = {
@@ -428,16 +417,16 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
 
 def _summary(df: pd.DataFrame, since_year: int, today: dt.date) -> None:
     d = df.copy()
-    d["opened_year"] = pd.to_datetime(d["opened_date"], errors="coerce").dt.year
+    d["first_seen_year"] = pd.to_datetime(d["first_seen_date"], errors="coerce").dt.year
     d["closed_year"] = pd.to_datetime(d["closed_date"], errors="coerce").dt.year
     years = list(range(since_year, today.year + 1))
-    op = d["opened_year"].value_counts().reindex(years, fill_value=0)
-    cl = d["closed_year"].value_counts().reindex(years, fill_value=0)
+    fs = d["first_seen_year"].value_counts().reindex(years, fill_value=0)
+    cl = d[d["status"] == "closed"]["closed_year"].value_counts().reindex(years, fill_value=0)
 
-    log.info("--- NYC boba shops, %d-%d ---", since_year, today.year)
-    log.info("year   opened  closed   net")
+    log.info("--- NYC boba shops (first seen = first DOHMH inspection, a proxy) ---")
+    log.info("year   first-seen  closed")
     for y in years:
-        log.info("%d   %6d  %6d  %+4d", y, op[y], cl[y], op[y] - cl[y])
+        log.info("%d   %9d  %6d", y, fs[y], cl[y])
     opn = d["status"] == "open"
     log.info(
         "currently: %d open (%d DOHMH-verified, %d Overture's word only), %d closed, %d unknown",

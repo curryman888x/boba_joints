@@ -2,7 +2,7 @@
 
 download 5-borough extract -> category pre-filter -> validate each candidate via
 the pydantic contract -> keep the ones that pass ``overture_is_boba`` -> upsert
-``overture_places`` (+ a per-release row in ``overture_place_snapshots``).
+``overture_places`` (mark & sweep to the current set).
 Writes an ``ingest_runs`` manifest row and logs drift vs the last good run.
 """
 
@@ -30,7 +30,7 @@ from boba.contracts import (
 from boba.db import SessionLocal, upsert
 from boba.filters import overture_is_boba
 from boba.log import get_logger, setup
-from boba.models import OverturePlace, OverturePlaceSnapshot
+from boba.models import OverturePlace
 
 log = get_logger("boba.ingest.overture")
 
@@ -93,42 +93,28 @@ def _prefilter(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return gdf[keep]
 
 
-def _rows(records, release: str | None) -> tuple[list[dict], list[dict]]:
-    places, snaps = [], []
-    for r in records:
-        geom = from_shape(Point(r.lon, r.lat), srid=4326)
-        places.append(
-            {
-                "id": r.id,
-                "name": r.name,
-                "category_primary": r.category_primary,
-                "categories": {"primary": r.category_primary, "all": r.categories_all},
-                "brand": r.brand,
-                "confidence": r.confidence,
-                "operating_status": r.operating_status,
-                "addr_freeform": r.addr_freeform,
-                "locality": r.locality,
-                "region": r.region,
-                "postcode": r.postcode,
-                "source_update_time": r.source_update_time,
-                "overture_release": release,
-                "first_seen_release": release,
-                "last_seen_release": release,
-                "geom": geom,
-            }
-        )
-        snaps.append(
-            {
-                "release": release or "unknown",
-                "place_id": r.id,
-                "name": r.name,
-                "category_primary": r.category_primary,
-                "operating_status": r.operating_status,
-                "confidence": r.confidence,
-                "geom": geom,
-            }
-        )
-    return places, snaps
+def _rows(records, release: str | None) -> list[dict]:
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "category_primary": r.category_primary,
+            "categories": {"primary": r.category_primary, "all": r.categories_all},
+            "brand": r.brand,
+            "confidence": r.confidence,
+            "operating_status": r.operating_status,
+            "addr_freeform": r.addr_freeform,
+            "locality": r.locality,
+            "region": r.region,
+            "postcode": r.postcode,
+            "source_update_time": r.source_update_time,
+            "overture_release": release,
+            "first_seen_release": release,
+            "last_seen_release": release,
+            "geom": from_shape(Point(r.lon, r.lat), srid=4326),
+        }
+        for r in records
+    ]
 
 
 def run(release: str | None = None, refresh: bool = False) -> None:
@@ -171,7 +157,7 @@ def run(release: str | None = None, refresh: bool = False) -> None:
         out_of_state,
     )
 
-    place_rows, snap_rows = _rows(kept, release)
+    place_rows = _rows(kept, release)
     with SessionLocal() as s:
         prev = last_successful_run(s, "overture")
         with ingest_run(s, "overture", source_version=release) as manifest:
@@ -184,16 +170,9 @@ def run(release: str | None = None, refresh: bool = False) -> None:
                 if place_rows
                 else None,
             )
-            if release and snap_rows:
-                upsert(
-                    s,
-                    OverturePlaceSnapshot,
-                    snap_rows,
-                    index_elements=["release", "place_id"],
-                )
             # mark & sweep: overture_places mirrors the current boba inventory.
-            # Vanished places stay recoverable in overture_place_snapshots.
-            # Guard: skip the sweep if this run is suspiciously thin vs the last.
+            # first_seen_release is preserved on conflict so we still know when a
+            # place first appeared. Guard: skip if this run is thin vs the last.
             swept = 0
             kept_ids = [r.id for r in kept]
             thin = prev and prev.kept_count and len(kept_ids) < 0.5 * prev.kept_count

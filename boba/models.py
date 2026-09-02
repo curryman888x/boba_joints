@@ -119,20 +119,6 @@ class OverturePlace(Base):
     )
 
 
-class OverturePlaceSnapshot(Base):
-    """Per-release slim snapshot, so we can diff Overture releases for churn signal."""
-
-    __tablename__ = "overture_place_snapshots"
-
-    release: Mapped[str] = mapped_column(String, primary_key=True)
-    place_id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str | None] = mapped_column(String)
-    category_primary: Mapped[str | None] = mapped_column(String)
-    operating_status: Mapped[str | None] = mapped_column(String)
-    confidence: Mapped[float | None] = mapped_column(Float)
-    geom: Mapped[object | None] = mapped_column(_point())
-
-
 class DohmhEstablishment(Base):
     """One row per CAMIS (DOHMH permitted food establishment)."""
 
@@ -232,17 +218,17 @@ class PlaceMatch(Base):
 
 
 class BobaShop(Base):
-    """Canonical merged boba shop with best-estimate opened / closed dates."""
+    """Canonical merged boba shop. Dates are *evidence bounds*, not lifecycle
+    events: first_seen_date = earliest DOHMH inspection (or Overture release);
+    last_seen_date = latest such evidence; closed_date is set only on a real
+    closure signal. See docs/methodology.md."""
 
     __tablename__ = "boba_shops"
     __table_args__ = (
         CheckConstraint("status in ('open', 'closed', 'unknown')", name="status"),
         CheckConstraint(
-            "opened_precision is null or opened_precision in ('month', 'quarter', 'year')",
-            name="opened_precision",
-        ),
-        CheckConstraint(
-            "opened_date is null or closed_date is null or closed_date >= opened_date",
+            "first_seen_date is null or last_seen_date is null "
+            "or last_seen_date >= first_seen_date",
             name="date_order",
         ),
         CheckConstraint(
@@ -254,6 +240,11 @@ class BobaShop(Base):
             "'yelp_closed', 'dohmh_closed_by_dohmh', 'dohmh_inactive', "
             "'overture_permanently_closed', 'none')",
             name="status_basis",
+        ),
+        CheckConstraint(
+            "first_seen_source is null or first_seen_source in "
+            "('dohmh_prepermit_inspection', 'dohmh_first_inspection', 'overture_release')",
+            name="first_seen_source",
         ),
     )
 
@@ -267,53 +258,19 @@ class BobaShop(Base):
     )
     geom: Mapped[object | None] = mapped_column(_point())
     borough: Mapped[str | None] = mapped_column(String, index=True)
-    opened_date: Mapped[date | None] = mapped_column(Date)
-    opened_source: Mapped[str | None] = mapped_column(String)
-    opened_precision: Mapped[str | None] = mapped_column(String)  # month | quarter | year
+    # earliest / latest evidence the shop existed (mostly DOHMH inspection dates)
+    first_seen_date: Mapped[date | None] = mapped_column(Date, index=True)
+    first_seen_source: Mapped[str | None] = mapped_column(String)
+    last_seen_date: Mapped[date | None] = mapped_column(Date)
+    # set only on a real closure signal (rare); NULL otherwise
     closed_date: Mapped[date | None] = mapped_column(Date)
     closed_source: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String, index=True)  # open | closed | unknown
-    # what the status rests on: dohmh_active | overture_open | dohmh_closed_by_dohmh
-    #   | dohmh_inactive | overture_permanently_closed | none
     status_basis: Mapped[str | None] = mapped_column(String, index=True)
-    # how this shop was identified as boba: overture_category | name_pattern | both | propagated
     identified_by: Mapped[str | None] = mapped_column(String, index=True)
-    notes: Mapped[str | None] = mapped_column(String)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-
-    events: Mapped[list[StatusEvent]] = relationship(
-        back_populates="boba_shop", cascade="all, delete-orphan"
-    )
-
-
-class StatusEvent(Base):
-    """Timeline of opened / closed / reopened events for a boba shop."""
-
-    __tablename__ = "status_events"
-    __table_args__ = (
-        CheckConstraint(
-            "event_type in ('opened', 'closed', 'reopened')",
-            name="event_type",
-        ),
-        CheckConstraint(
-            "confidence is null or confidence in ('high', 'proxy', 'low')",
-            name="confidence",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    boba_shop_id: Mapped[int] = mapped_column(
-        ForeignKey("boba_shops.id", ondelete="CASCADE"), index=True
-    )
-    event_type: Mapped[str] = mapped_column(String)  # opened | closed | reopened
-    event_date: Mapped[date | None] = mapped_column(Date, index=True)
-    source: Mapped[str | None] = mapped_column(String)
-    confidence: Mapped[str | None] = mapped_column(String)  # high | proxy | low
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    boba_shop: Mapped[BobaShop] = relationship(back_populates="events")
 
 
 class YelpStatus(Base):

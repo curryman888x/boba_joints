@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from types import SimpleNamespace
 
-from boba.analyze import _closed, _dedup, _haversine_m, _identified_by, _opened
+from boba.analyze import _closed, _dedup, _first_seen, _haversine_m, _identified_by
 
 TODAY = dt.date(2026, 9, 1)
 
@@ -36,21 +36,19 @@ def ov(**kw):
     return SimpleNamespace(**base)
 
 
-# --- _opened ---------------------------------------------------------
+# --- _first_seen ----------------------------------------------------
 
 
-def test_opened_prefers_dohmh_first_inspection():
+def test_first_seen_prefers_dohmh_first_inspection():
     d = dt.date(2023, 4, 1)
-    # quarter precision -- first inspection lags the true opening by the permit gap
-    assert _opened(est(first_inspection_date=d), ov()) == (d, "dohmh_first_inspection", "quarter")
+    assert _first_seen(est(first_inspection_date=d), ov()) == (d, "dohmh_first_inspection")
 
 
-def test_opened_uses_first_seen_release_only_across_two_ingests():
+def test_first_seen_uses_overture_release_only_across_two_ingests():
     o1 = ov(first_seen_release="2026-08-19.0", last_seen_release="2026-08-19.0")
-    assert _opened(None, o1) == (None, None, None)  # single ingest -> no signal
+    assert _first_seen(None, o1) == (None, None)  # single ingest -> no signal
     o2 = ov(first_seen_release="2026-07-22.0", last_seen_release="2026-08-19.0")
-    d, src, prec = _opened(None, o2)
-    assert (d, src, prec) == (dt.date(2026, 7, 22), "overture_first_release", "quarter")
+    assert _first_seen(None, o2) == (dt.date(2026, 7, 22), "overture_release")
 
 
 # --- _closed / status_basis ---------------------------------------
@@ -134,14 +132,14 @@ def test_identified_by_precedence():
 # --- _dedup + haversine -----------------------------------------
 
 
-def _shop(name, lon, lat, camis=None, status="open", opened=None, oid="x"):
+def _shop(name, lon, lat, camis=None, status="open", first_seen=None, oid="x"):
     return {
         "name": name,
         "lon": lon,
         "lat": lat,
         "camis": camis,
         "status": status,
-        "opened_date": opened,
+        "first_seen_date": first_seen,
         "overture_id": oid,
     }
 
@@ -153,7 +151,7 @@ def test_haversine_metres_roughly_right():
 
 def test_dedup_merges_same_name_within_60m_keeps_richest():
     a = _shop("Gong Cha", -73.9800, 40.7500, oid="a")
-    b = _shop("GONG CHA", -73.98005, 40.75002, camis="123", opened=dt.date(2023, 1, 1), oid="b")
+    b = _shop("GONG CHA", -73.98005, 40.75002, camis="123", first_seen=dt.date(2023, 1, 1), oid="b")
     out = _dedup([a, b])
     assert len(out) == 1
     assert out[0]["camis"] == "123"  # richer row won

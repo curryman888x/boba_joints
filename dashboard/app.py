@@ -1,4 +1,4 @@
-"""NYC boba joints dashboard.  Run: `just dashboard` (container) or `just dashboard-local`."""
+"""NYC boba joints dashboard.  `just dashboard` (container) or `just dashboard-local`."""
 
 from __future__ import annotations
 
@@ -15,9 +15,8 @@ st.set_page_config(page_title="NYC boba joints", page_icon="🧋", layout="wide"
 THIS_YEAR = dt.date.today().year
 SINCE = 2022
 
-# plotly legends toggle categories on click, so colour is the interactive filter
 STATUS_COLOR = {"open": "#26a69a", "closed": "#e57373", "unknown": "#b0bec5"}
-KIND_COLOR = {"opened": "#26a69a", "closed": "#e57373"}
+KIND_COLOR = {"first seen": "#26a69a", "closed": "#e57373"}
 ALL_IDENT = ["overture_category", "both", "name_pattern", "propagated"]
 
 
@@ -27,10 +26,8 @@ def load_shops() -> pd.DataFrame:
         text(
             """
             select s.id, s.name, s.borough, s.status, s.status_basis, s.identified_by,
-                   s.opened_date, s.opened_source, s.opened_precision,
+                   s.first_seen_date, s.first_seen_source, s.last_seen_date,
                    s.closed_date, s.closed_source,
-                   (s.overture_id is not null) as has_overture,
-                   (s.camis is not null)      as has_dohmh,
                    o.brand,
                    coalesce(
                        o.addr_freeform,
@@ -43,7 +40,7 @@ def load_shops() -> pd.DataFrame:
             """
         ),
         engine,
-        parse_dates=["opened_date", "closed_date"],
+        parse_dates=["first_seen_date", "last_seen_date", "closed_date"],
     )
 
 
@@ -70,7 +67,7 @@ def load_matches() -> pd.DataFrame:
 
 shops = load_shops()
 
-# --- sidebar filters -----------------------------------------------------
+# --- sidebar filters --------------------------------------------------
 st.sidebar.header("Filters")
 boroughs = sorted(b for b in shops["borough"].dropna().unique())
 brands = sorted(b for b in shops["brand"].dropna().unique())
@@ -81,7 +78,7 @@ f_status = st.sidebar.multiselect(
 )
 f_brand = st.sidebar.multiselect("Brand (blank = all)", brands)
 f_verified = st.sidebar.checkbox(
-    "Open shops: DOHMH-verified only",
+    "Open shops: verified only",
     help="drop 'open' shops whose only signal is Overture's operating_status",
 )
 
@@ -93,41 +90,45 @@ f = shops[
 if f_brand:
     f = f[f["brand"].isin(f_brand)]
 if f_verified:
-    f = f[(f["status"] != "open") | (f["status_basis"] == "dohmh_active")]
+    f = f[(f["status"] != "open") | (f["status_basis"].isin(["dohmh_active", "yelp_open"]))]
 
-op = f.dropna(subset=["opened_date"])
+fs = f.dropna(subset=["first_seen_date"])
 cl = f[(f["status"] == "closed") & f["closed_date"].notna()]
 
 DATE_COLS = {
-    "opened_date": st.column_config.DateColumn("opened", format="YYYY-MM-DD"),
+    "first_seen_date": st.column_config.DateColumn("first seen", format="YYYY-MM-DD"),
+    "last_seen_date": st.column_config.DateColumn("last seen", format="YYYY-MM-DD"),
     "closed_date": st.column_config.DateColumn("closed", format="YYYY-MM-DD"),
 }
 
-# --- header + KPIs ----------------------------------------------------
-st.title("🧋 NYC boba joints — openings & closings, 2022–2026")
+# --- header + KPIs --------------------------------------------------
+st.title("🧋 NYC boba joints — 2022–2026")
 st.caption(
-    "Overture Places (boba label + location) joined to NYC DOHMH inspections (the timeline). "
-    "Counts are a **lower bound** — shops are identified by category/name, not a ground-truth list."
+    "Overture Places (boba label + location) joined to NYC DOHMH inspections and Yelp. "
+    "Counts are a **lower bound**; **dates are evidence bounds, not lifecycle events** "
+    "(see below)."
 )
 opn = f["status"] == "open"
+verified = opn & f["status_basis"].isin(["dohmh_active", "yelp_open"])
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Boba shops", len(f))
-k2.metric("Open · DOHMH-verified", int((opn & (f["status_basis"] == "dohmh_active")).sum()))
+k2.metric("Open · verified", int(verified.sum()))
 k3.metric("Open · Overture's word", int((opn & (f["status_basis"] == "overture_open")).sum()))
 k4.metric("Closed", int((f["status"] == "closed").sum()))
 k5.metric("Unknown", int((f["status"] == "unknown").sum()))
 st.caption(
-    ":grey[**DOHMH-verified** = inspected within ~18 months. **Overture's word** = only "
-    "Overture's `operating_status` says so — unreliable (it lags real closures). "
-    "**unknown** = no signal either way.]"
+    ":grey[**first seen** = first DOHMH health inspection (or Overture release) — this *lags* the "
+    "real opening by the permit gap, so read it as *operating by* this date, ±1 quarter. "
+    "**verified** = a DOHMH inspection within ~18 months, or Yelp. **Overture's word** = only "
+    "Overture's `operating_status` — it lags real closures. **unknown** = no signal.]"
 )
 
-# --- recent activity (exact dates) --------------------------------
+# --- recent activity -----------------------------------------------
 a1, a2 = st.columns(2)
-a1.markdown("**Most recent openings**")
+a1.markdown("**Most recently first seen**")
 a1.dataframe(
-    op.nlargest(15, "opened_date")[
-        ["opened_date", "name", "brand", "address", "borough", "opened_source"]
+    fs.nlargest(15, "first_seen_date")[
+        ["first_seen_date", "name", "brand", "address", "borough", "first_seen_source"]
     ],
     hide_index=True,
     width="stretch",
@@ -147,16 +148,16 @@ tab_tl, tab_map, tab_tbl, tab_dq, tab_chain = st.tabs(
     ["Timeline", "Map", "Shops", "Data quality", "By chain"]
 )
 
-# --- Timeline -------------------------------------------------------
+# --- Timeline ----------------------------------------------------
 with tab_tl:
     years = list(range(SINCE, THIS_YEAR + 1))
     tl = pd.DataFrame({"year": years})
-    tl["opened"] = tl["year"].map(op["opened_date"].dt.year.value_counts()).fillna(0).astype(int)
+    tl["first seen"] = (
+        tl["year"].map(fs["first_seen_date"].dt.year.value_counts()).fillna(0).astype(int)
+    )
     tl["closed"] = tl["year"].map(cl["closed_date"].dt.year.value_counts()).fillna(0).astype(int)
-    tl["net"] = tl["opened"] - tl["closed"]
-    tl["active (cumulative)"] = tl["net"].cumsum()
 
-    long = tl.melt("year", ["opened", "closed"], "kind", "count")
+    long = tl.melt("year", ["first seen", "closed"], "kind", "count")
     fig = px.bar(
         long,
         x="year",
@@ -168,12 +169,16 @@ with tab_tl:
     )
     fig.update_layout(legend_title_text="", xaxis_title="", margin=dict(t=10, b=0))
     st.plotly_chart(fig, width="stretch")
+    st.caption(
+        "'first seen' ≈ openings but dated by first inspection (lags, ±1 quarter). "
+        "'closed' is DOHMH forced-closure / >18mo silence / Yelp / Overture — noisy and lagging."
+    )
     st.dataframe(tl.set_index("year"), width="stretch")
 
-    st.markdown("**Every opening / closing on a date axis** — click a borough to hide it")
+    st.markdown("**Every first-seen / closing on a date axis** — click a borough to hide it")
     ev = pd.concat(
         [
-            op.assign(kind="opened", date=op["opened_date"]),
+            fs.assign(kind="first seen", date=fs["first_seen_date"]),
             cl.assign(kind="closed", date=cl["closed_date"]),
         ]
     )[["date", "kind", "name", "brand", "borough"]]
@@ -194,11 +199,11 @@ with tab_tl:
 
     yr = st.selectbox("List shops for year", years[::-1])
     d1, d2 = st.columns(2)
-    d1.markdown(f"**Opened in {yr}**")
+    d1.markdown(f"**First seen in {yr}**")
     d1.dataframe(
-        op[op["opened_date"].dt.year == yr][
-            ["opened_date", "name", "brand", "address", "borough", "opened_source"]
-        ].sort_values("opened_date"),
+        fs[fs["first_seen_date"].dt.year == yr][
+            ["first_seen_date", "name", "brand", "address", "borough", "first_seen_source"]
+        ].sort_values("first_seen_date"),
         hide_index=True,
         width="stretch",
         column_config=DATE_COLS,
@@ -213,19 +218,18 @@ with tab_tl:
         column_config=DATE_COLS,
     )
     st.info(
-        "Openings are DOHMH first-inspection dates (month precision). "
-        f"{int(f['opened_date'].isna().sum())} filtered shops have no known opening date "
+        f"{int(f['first_seen_date'].isna().sum())} filtered shops have no first-seen date "
         "(no DOHMH match) and are absent from the timeline."
     )
 
-# --- Map ---------------------------------------------------------
+# --- Map -------------------------------------------------------
 with tab_map:
     color_by = st.radio(
         "Colour by", ["status", "status_basis", "identified_by", "borough"], horizontal=True
     )
     m = f.dropna(subset=["lon", "lat"]).copy()
     m["brand"] = m["brand"].fillna("")
-    m["opened"] = m["opened_date"].dt.strftime("%Y-%m-%d").fillna("—")
+    m["first_seen"] = m["first_seen_date"].dt.strftime("%Y-%m-%d").fillna("—")
     m["closed"] = m["closed_date"].dt.strftime("%Y-%m-%d").fillna("—")
     fig = px.scatter_map(
         m,
@@ -239,12 +243,12 @@ with tab_map:
             "borough": True,
             "status": True,
             "status_basis": True,
-            "opened": True,
+            "first_seen": True,
             "closed": True,
             "lat": False,
             "lon": False,
         },
-        map_style="carto-positron",  # clean grey basemap so the dots pop
+        map_style="carto-positron",
         center={"lat": 40.72, "lon": -73.94},
         zoom=10.3,
         height=700,
@@ -257,11 +261,10 @@ with tab_map:
     )
     st.plotly_chart(fig, width="stretch")
     st.caption(
-        f"{len(m)} of {len(f)} filtered shops have coordinates. "
-        "Click a legend entry to hide that group."
+        f"{len(m)} of {len(f)} filtered shops have coordinates. Click a legend entry to hide it."
     )
 
-# --- Shops table ------------------------------------------------
+# --- Shops table --------------------------------------------
 with tab_tbl:
     cols = [
         "name",
@@ -270,18 +273,18 @@ with tab_tbl:
         "status",
         "status_basis",
         "address",
-        "opened_date",
-        "opened_precision",
-        "opened_source",
+        "first_seen_date",
+        "first_seen_source",
+        "last_seen_date",
         "closed_date",
         "closed_source",
         "identified_by",
     ]
-    view = f[cols].sort_values("opened_date", ascending=False, na_position="last")
+    view = f[cols].sort_values("first_seen_date", ascending=False, na_position="last")
     st.dataframe(view, width="stretch", hide_index=True, column_config=DATE_COLS)
     st.download_button("Download CSV", view.to_csv(index=False), "boba_shops.csv", "text/csv")
 
-# --- Data quality --------------------------------------------
+# --- Data quality ------------------------------------------
 with tab_dq:
     c1, c2 = st.columns(2)
     with c1:
@@ -312,8 +315,8 @@ with tab_dq:
     sb = f.groupby(["status", "status_basis"]).size().reset_index(name="n")
     st.dataframe(sb.sort_values("n", ascending=False), width="stretch", hide_index=True)
     st.caption(
-        "`overture_open` = we're trusting Overture's `operating_status` with nothing "
-        "to corroborate it; those 'open's are the least trustworthy."
+        "`overture_open` = trusting Overture's `operating_status` with nothing to corroborate — "
+        "the least trustworthy 'open'. `yelp_*` / `dohmh_*` are checked."
     )
 
     st.subheader("Ingest manifest")
@@ -328,8 +331,8 @@ with tab_chain:
             shops=("id", "count"),
             open=("status", lambda s: (s == "open").sum()),
             closed=("status", lambda s: (s == "closed").sum()),
-            first_opened=("opened_date", "min"),
-            latest_opened=("opened_date", "max"),
+            earliest_seen=("first_seen_date", "min"),
+            latest_seen=("first_seen_date", "max"),
         )
         .sort_values("shops", ascending=False)
         .head(25)
@@ -338,8 +341,8 @@ with tab_chain:
         ch,
         width="stretch",
         column_config={
-            "first_opened": st.column_config.DateColumn(format="YYYY-MM-DD"),
-            "latest_opened": st.column_config.DateColumn(format="YYYY-MM-DD"),
+            "earliest_seen": st.column_config.DateColumn(format="YYYY-MM-DD"),
+            "latest_seen": st.column_config.DateColumn(format="YYYY-MM-DD"),
         },
     )
     st.caption("Brands from Overture. Only shops matched to an Overture place with a brand appear.")

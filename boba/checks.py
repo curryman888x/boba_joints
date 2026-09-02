@@ -55,18 +55,21 @@ INVARIANTS: list[tuple[str, str]] = [
         "select count(*) from boba_shops where status not in ('open', 'closed', 'unknown')",
     ),
     (
-        "boba_shops opened_date <= closed_date",
-        "select count(*) from boba_shops "
-        "where opened_date is not null and closed_date is not null and closed_date < opened_date",
+        "boba_shops first_seen_date <= last_seen_date",
+        "select count(*) from boba_shops where first_seen_date is not null "
+        "and last_seen_date is not null and last_seen_date < first_seen_date",
     ),
     (
         "boba_shops has at least one source id",
         "select count(*) from boba_shops where overture_id is null and camis is null",
     ),
     (
-        "status_events reference a boba_shop",
-        "select count(*) from status_events e "
-        "left join boba_shops s on s.id = e.boba_shop_id where s.id is null",
+        "boba_shops closed_date only when status = closed",
+        "select count(*) from boba_shops where closed_date is not null and status <> 'closed'",
+    ),
+    (
+        "yelp_status keyed by exactly one id",
+        "select count(*) from yelp_status where (overture_id is null) = (camis is null)",
     ),
     (
         "every ok ingest_run recorded a kept_count",

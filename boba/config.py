@@ -33,10 +33,8 @@ BOBA_FALLBACK_CATEGORIES = {
     "cafe",
     "coffee_shop",
     "tea_room",
-    "dessert_shop",
-    "juice_bar",
-    "shopping",
-    "food",
+    "desserts",
+    "smoothie_juice_bar",
 }
 
 # Name-based signal for boba shops, applied to both Overture names and DOHMH `dba`.
@@ -72,4 +70,6 @@ SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN") or None
 # Yelp Fusion API key -> current open/closed status for shops DOHMH can't verify.
 # Free key at https://www.yelp.com/developers  (~500 calls/day).
 YELP_API_KEY = os.environ.get("YELP_API_KEY") or None
+YELP_MATCH_URL = "https://api.yelp.com/v3/businesses/matches"
+YELP_BUSINESS_URL = "https://api.yelp.com/v3/businesses"  # + /{id}
 YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search"
