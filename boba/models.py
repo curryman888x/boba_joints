@@ -193,6 +193,7 @@ class DohmhInspection(Base):
         ForeignKey("dohmh_establishments.camis", ondelete="CASCADE"), index=True
     )
     inspection_date: Mapped[date | None] = mapped_column(Date, index=True)
+    inspection_type: Mapped[str | None] = mapped_column(String)  # "Pre-permit ... / Initial" etc.
     action: Mapped[str | None] = mapped_column(String)
     critical_flag: Mapped[str | None] = mapped_column(String)
     score: Mapped[float | None] = mapped_column(Float)
@@ -249,8 +250,9 @@ class BobaShop(Base):
             name="identified_by",
         ),
         CheckConstraint(
-            "status_basis in ('dohmh_active', 'overture_open', 'dohmh_closed_by_dohmh', "
-            "'dohmh_inactive', 'overture_permanently_closed', 'none')",
+            "status_basis in ('dohmh_active', 'yelp_open', 'overture_open', "
+            "'yelp_closed', 'dohmh_closed_by_dohmh', 'dohmh_inactive', "
+            "'overture_permanently_closed', 'none')",
             name="status_basis",
         ),
     )
@@ -312,3 +314,32 @@ class StatusEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     boba_shop: Mapped[BobaShop] = relationship(back_populates="events")
+
+
+class YelpStatus(Base):
+    """Current open/closed for a shop from Yelp Fusion -- the corroboration DOHMH
+    can't give for Overture-only shops. Keyed by whichever id identifies the shop
+    (overture_id or camis, exactly one set). analyze.py left-joins on both."""
+
+    __tablename__ = "yelp_status"
+    __table_args__ = (
+        UniqueConstraint(
+            "overture_id", "camis", name="uq_yelp_status_key", postgresql_nulls_not_distinct=True
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    overture_id: Mapped[str | None] = mapped_column(
+        ForeignKey("overture_places.id", ondelete="CASCADE"), index=True
+    )
+    camis: Mapped[str | None] = mapped_column(
+        ForeignKey("dohmh_establishments.camis", ondelete="CASCADE"), index=True
+    )
+    yelp_id: Mapped[str | None] = mapped_column(String)  # null == searched, no match
+    yelp_name: Mapped[str | None] = mapped_column(String)
+    is_closed: Mapped[bool | None] = mapped_column(Boolean)
+    rating: Mapped[float | None] = mapped_column(Float)
+    review_count: Mapped[int | None] = mapped_column(Integer)
+    url: Mapped[str | None] = mapped_column(String)
+    match_score: Mapped[float | None] = mapped_column(Float)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

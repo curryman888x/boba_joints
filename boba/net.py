@@ -1,4 +1,4 @@
-"""HTTP session with retry/backoff, used for the Socrata pulls."""
+"""HTTP session with retry/backoff, used for the Socrata and Yelp pulls."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from boba.config import SOCRATA_APP_TOKEN
+from boba.config import SOCRATA_APP_TOKEN, YELP_API_KEY
 
 
 def session_with_retries(
@@ -34,4 +34,12 @@ def socrata_session() -> requests.Session:
     s = session_with_retries()
     if SOCRATA_APP_TOKEN:
         s.headers["X-App-Token"] = SOCRATA_APP_TOKEN
+    return s
+
+
+def yelp_session() -> requests.Session:
+    if not YELP_API_KEY:
+        raise RuntimeError("YELP_API_KEY is not set (add it to .env)")
+    s = session_with_retries()
+    s.headers["Authorization"] = f"Bearer {YELP_API_KEY}"
     return s

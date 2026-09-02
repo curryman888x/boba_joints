@@ -26,3 +26,40 @@ def overture_is_boba(rec: OverturePlaceRecord) -> bool:
 
 def dohmh_is_boba(dba: str | None) -> bool:
     return name_looks_like_boba(dba)
+
+
+# generic tokens that inflate fuzzy name matches between unrelated shops
+NAME_STOPWORDS = frozenset(
+    {
+        "bubble",
+        "tea",
+        "boba",
+        "milk",
+        "cafe",
+        "coffee",
+        "the",
+        "shop",
+        "house",
+        "and",
+        "ny",
+        "nyc",
+        "llc",
+        "inc",
+        "co",
+        "of",
+        "at",
+    }
+)
+
+
+def _alnum(s) -> str:
+    if not isinstance(s, str):
+        return ""
+    return "".join(c if (c.isalnum() or c.isspace()) else " " for c in s.lower())
+
+
+def name_key(s) -> str:
+    """Lowercase, punctuation -> space, drop generic tokens. Used for fuzzy matching
+    (match.py, ingest/yelp.py). Falls back to the plain form if all-stopwords."""
+    toks = [t for t in _alnum(s).split() if t not in NAME_STOPWORDS]
+    return " ".join(toks) or _alnum(s)

@@ -45,12 +45,14 @@ _ESTABLISHMENTS = f"""
            e.first_inspection_date, e.last_inspection_date,
            e.closed_flag, e.closed_date, e.reopened_date,
            st_x(e.geom) lon, st_y(e.geom) lat,
-           m.overture_id, m.score
+           m.overture_id, m.score,
+           y.is_closed as yelp_is_closed
     from dohmh_establishments e
     left join lateral (
         select overture_id, score from place_matches pm
         where pm.camis = e.camis order by score desc limit 1
     ) m on true
+    left join yelp_status y on y.camis = e.camis
     where e.camis in ({_BOBA_CAMIS})
 """
 
@@ -59,12 +61,14 @@ _OVERTURE = """
            o.source_update_time, o.first_seen_release, o.last_seen_release,
            jsonb_exists(o.categories -> 'all', 'bubble_tea') as is_bubble_tea,
            st_x(o.geom) lon, st_y(o.geom) lat,
-           m.camis
+           m.camis,
+           y.is_closed as yelp_is_closed
     from overture_places o
     left join lateral (
         select camis, score from place_matches pm
         where pm.overture_id = o.id order by score desc limit 1
     ) m on true
+    left join yelp_status y on y.overture_id = o.id
 """
 
 # DOHMH `boro` fallback (used only when a point sits just outside the polygons,
@@ -140,7 +144,9 @@ def _release_date(rel: str | None) -> dt.date | None:
 
 def _opened(est, ov) -> tuple[dt.date | None, str | None, str | None]:
     if est is not None and pd.notna(est.first_inspection_date):
-        return est.first_inspection_date, "dohmh_first_inspection", "month"
+        # first inspection is weeks-to-months AFTER the shop opened (permit lag),
+        # so this is an upper bound on the opening date -- quarter precision.
+        return est.first_inspection_date, "dohmh_first_inspection", "quarter"
     # first_seen_release is only meaningful once a place has persisted across
     # >= 2 of our ingests (otherwise it's just "when we started collecting").
     # `source_update_time` is deliberately NOT used -- it's when Overture last
@@ -152,13 +158,24 @@ def _opened(est, ov) -> tuple[dt.date | None, str | None, str | None]:
     return None, None, None
 
 
+def _yelp_is_closed(est, ov):
+    for o in (est, ov):
+        v = getattr(o, "yelp_is_closed", None) if o is not None else None
+        if v is not None and pd.notna(v):
+            return bool(v)
+    return None
+
+
 def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str, str]:
     """-> (closed_date, closed_source, status, status_basis)."""
-    # --- explicit closure signals ---
+    yelp = _yelp_is_closed(est, ov)
+    # --- closure signals, strongest first ---
     if est is not None and est.closed_flag and pd.notna(est.closed_date):
         reopened = pd.notna(est.reopened_date) and est.reopened_date >= est.closed_date
         if not reopened:
             return est.closed_date, "dohmh_closed_by_dohmh", "closed", "dohmh_closed_by_dohmh"
+    if yelp is True:  # Yelp is current -- beats a stale inspection
+        return None, "yelp", "closed", "yelp_closed"
     if ov is not None and ov.operating_status == "permanently_closed":
         d = ov.source_update_time.date() if pd.notna(ov.source_update_time) else None
         return d, "overture_permanently_closed", "closed", "overture_permanently_closed"
@@ -167,9 +184,11 @@ def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str, str]:
         if idle > INACTIVE_DAYS and not est.closed_flag:
             return est.last_inspection_date, "dohmh_inactive", "closed", "dohmh_inactive"
         return None, None, "open", "dohmh_active"  # inspected within ~18 months
-    # --- positive "open" signal (Overture's word only -- unreliable), else unknown ---
+    # --- positive "open" signals, most trustworthy first, else unknown ---
+    if yelp is False:
+        return None, None, "open", "yelp_open"
     if ov is not None and ov.operating_status == "open":
-        return None, None, "open", "overture_open"
+        return None, None, "open", "overture_open"  # Overture's word only -- unreliable
     return None, None, "unknown", "none"
 
 
@@ -262,9 +281,7 @@ def _dedup(shops: list[dict]) -> list[dict]:
             best["overture_id"] = best["overture_id"] or next(
                 (c["overture_id"] for c in cluster if c["overture_id"]), None
             )
-            best["camis"] = best["camis"] or next(
-                (c["camis"] for c in cluster if c["camis"]), None
-            )
+            best["camis"] = best["camis"] or next((c["camis"] for c in cluster if c["camis"]), None)
             kept.append(best)
             dropped += len(cluster) - 1
     if dropped:

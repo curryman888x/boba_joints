@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from boba.contracts import ingest_run
 from boba.db import SessionLocal, engine, upsert
+from boba.filters import name_key
 from boba.log import get_logger, setup
 from boba.models import PlaceMatch
 
@@ -31,27 +32,6 @@ NAME_ALONE_M = 60.0  # ...but only within this distance
 CLOSE_M = 35.0  # closer than this, accept a weaker name...
 NAME_MIN_CLOSE = 55.0  # ...down to here
 MAX_PER_PLACE = 5
-
-# generic words that inflate token_set_ratio between unrelated boba shops
-_STOP = {
-    "bubble",
-    "tea",
-    "boba",
-    "milk",
-    "cafe",
-    "coffee",
-    "the",
-    "shop",
-    "house",
-    "and",
-    "ny",
-    "nyc",
-    "llc",
-    "inc",
-    "co",
-    "of",
-    "at",
-}
 
 _CANDIDATES_SQL = text(
     """
@@ -66,21 +46,10 @@ _CANDIDATES_SQL = text(
 )
 
 
-def _norm(s) -> str:
-    if not isinstance(s, str):
-        return ""
-    return "".join(c if (c.isalnum() or c.isspace()) else " " for c in s.lower())
-
-
-def _name_key(s) -> str:
-    toks = [t for t in _norm(s).split() if t not in _STOP]
-    return " ".join(toks) or _norm(s)  # fall back if the name was all stopwords
-
-
 def _score(o_name, dba, o_addr, street, dist_m) -> tuple[float, float, str]:
-    name_sim = fuzz.token_set_ratio(_name_key(o_name), _name_key(dba))
-    street_tokens = _norm(street).split()
-    addr_hit = bool(street_tokens) and street_tokens[0] in _norm(o_addr)
+    name_sim = fuzz.token_set_ratio(name_key(o_name), name_key(dba))
+    street_tokens = name_key(street).split()
+    addr_hit = bool(street_tokens) and street_tokens[0] in name_key(o_addr)
     score = name_sim - min(dist_m / 12.0, 25.0) + (8.0 if addr_hit else 0.0)
     return name_sim, score, ("name_addr" if addr_hit else "name_dist")
 

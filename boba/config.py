@@ -68,3 +68,8 @@ DOHMH_SOCRATA_BASE = f"https://data.cityofnewyork.us/resource/{DOHMH_DATASET_ID}
 # Optional Socrata app token -> much higher rate limits for the DOHMH pull.
 # Register one free at https://evergreen.data.socrata.com/profile/app_tokens
 SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN") or None
+
+# Yelp Fusion API key -> current open/closed status for shops DOHMH can't verify.
+# Free key at https://www.yelp.com/developers  (~500 calls/day).
+YELP_API_KEY = os.environ.get("YELP_API_KEY") or None
+YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search"

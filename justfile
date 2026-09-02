@@ -93,9 +93,13 @@ ingest-dohmh:
 match:
     uv run python -m boba.match
 
+# Yelp current open/closed for shops DOHMH can't verify (needs YELP_API_KEY; capped, cached)
+ingest-yelp:
+    uv run python -m boba.ingest.yelp
+
 # Compute boba_shops + status_events + summary output
 analyze:
     uv run python -m boba.analyze
 
 # Whole pipeline from a cold start
-all: db-up migrate seed ingest-overture ingest-dohmh match analyze check
+all: db-up migrate seed ingest-overture ingest-dohmh match ingest-yelp analyze check

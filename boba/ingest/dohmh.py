@@ -140,6 +140,7 @@ def _inspection_rows(df: pd.DataFrame) -> list[dict]:
     cols = [
         "camis",
         "inspection_date",
+        "inspection_type",
         "action",
         "critical_flag",
         "score",
@@ -206,7 +207,15 @@ _RECOMPUTE_SQL = text(
     from (
         select
             camis,
-            min(inspection_date) filter (where inspection_date is not null) as first_insp,
+            -- prefer the pre-permit / initial inspection (done right as a new shop
+            -- opens); fall back to the earliest inspection of any type
+            coalesce(
+                min(inspection_date) filter (
+                    where inspection_date is not null
+                      and inspection_type ilike 'pre-permit%'
+                ),
+                min(inspection_date) filter (where inspection_date is not null)
+            ) as first_insp,
             max(inspection_date) as last_insp,
             max(record_date)     as last_rec,
             coalesce(bool_or(action ilike 'Establishment Closed by DOHMH%'), false) as ever_closed,
