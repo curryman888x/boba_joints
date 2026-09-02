@@ -117,6 +117,12 @@ def test_yelp_open_outranks_overture_open():
     assert _closed(None, o, yb(yelp_is_closed=False), TODAY)[2:] == ("open", "yelp_open")
 
 
+def test_yelp_open_beats_dohmh_inactive():
+    # long inspection silence, but Yelp is current and says open -> not "closed"
+    e = est(last_inspection_date=dt.date(2024, 1, 1))
+    assert _closed(e, ov(), yb(yelp_is_closed=False), TODAY) == (None, None, "open", "yelp_open")
+
+
 # --- _identified_by ----------------------------------------------
 
 

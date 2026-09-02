@@ -47,6 +47,14 @@ def _in_bbox(lon, lat, bbox) -> bool:
     return bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]
 
 
+def _is_boba_business(name: str | None, categories: list[dict]) -> bool:
+    """Yelp over-tags -- a ramen shop can carry ``bubbletea`` as its 3rd category.
+    Keep a result only if ``bubbletea`` is its *primary* category, or the name
+    itself reads as boba."""
+    aliases = [c.get("alias") for c in categories]
+    return aliases[:1] == ["bubbletea"] or name_looks_like_boba(name)
+
+
 def _search_tile(sess, bbox, budget: list[int]) -> list[dict]:
     """All bubbletea businesses for one bbox tile (paged, <= 240)."""
     lo_lon, lo_lat, hi_lon, hi_lat = bbox
@@ -124,10 +132,7 @@ def discover(limit: int) -> int:
             continue
         if not _in_bbox(rec.lon, rec.lat, NYC_BBOX):
             continue
-        aliases = [c.get("alias") for c in rec.categories]
-        # Yelp over-tags: a ramen place with bubbletea 3rd isn't a boba shop.
-        # Keep it only if bubbletea is the primary category, or the name says so.
-        if not (aliases[:1] == ["bubbletea"] or name_looks_like_boba(rec.name)):
+        if not _is_boba_business(rec.name, rec.categories):
             off_topic += 1
             continue
         rows.append(

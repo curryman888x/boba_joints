@@ -188,9 +188,12 @@ def _closed(est, ov, yb, today) -> tuple[dt.date | None, str | None, str, str]:
         return d, "overture_permanently_closed", "closed", "overture_permanently_closed"
     if est is not None and pd.notna(est.last_inspection_date):
         idle = (today - est.last_inspection_date).days
-        if idle > INACTIVE_DAYS and not est.closed_flag:
+        if idle <= INACTIVE_DAYS:
+            return None, None, "open", "dohmh_active"  # inspected within ~18 months
+        if yelp is False:  # Yelp is current -- an inspection gap doesn't override it
+            return None, None, "open", "yelp_open"
+        if not est.closed_flag:  # long silence, nothing says open -> presumed closed
             return est.last_inspection_date, "dohmh_inactive", "closed", "dohmh_inactive"
-        return None, None, "open", "dohmh_active"  # inspected within ~18 months
     # --- positive "open" signals, most trustworthy first, else unknown ---
     if yelp is False:
         return None, None, "open", "yelp_open"
