@@ -62,7 +62,8 @@ def _is_boba_business(name: str | None, categories: list[dict]) -> bool:
 
 
 def _search_tile(sess, bbox, budget: list[int]) -> list[dict]:
-    """All bubbletea businesses for one bbox tile (paged, <= 240)."""
+    """All bubbletea businesses for one bbox tile (paged, <= 240).
+    ``budget`` is ``[calls_remaining, rate_limited_flag]``."""
     lo_lon, lo_lat, hi_lon, hi_lat = bbox
     clat, clon = (lo_lat + hi_lat) / 2, (lo_lon + hi_lon) / 2
     radius = min(40000, int(_haversine_m(lo_lon, lo_lat, hi_lon, hi_lat) / 2) + 200)
@@ -86,8 +87,9 @@ def _search_tile(sess, bbox, budget: list[int]) -> list[dict]:
         )
         budget[0] -= 1
         if r.status_code == 429:
-            log.warning("Yelp rate limit -- stopping discovery")
-            budget[0] = 0
+            reset = r.headers.get("ratelimit-resettime", "?")
+            log.warning("Yelp rate limit -- stopping discovery (resets %s)", reset)
+            budget[0], budget[1] = 0, 1
             break
         r.raise_for_status()
         batch = r.json().get("businesses", [])
@@ -124,7 +126,7 @@ def _sweep(sess, bbox, seen: dict, budget: list[int], depth: int = 0) -> None:
 def discover(limit: int) -> int:
     sess = yelp_session()
     seen: dict[str, dict] = {}
-    budget = [limit]
+    budget = [limit, 0]  # [calls_remaining, rate_limited_flag]
     _sweep(sess, NYC_BBOX, seen, budget)
     log.info("discovery: %d unique Yelp businesses (%d calls used)", len(seen), limit - budget[0])
 
@@ -136,6 +138,13 @@ def discover(limit: int) -> int:
             "thin sweep (%d) -- falling back to %d cached businesses", len(seen), len(cached)
         )
         seen = {b["id"]: b for b in cached if b.get("id")}
+    elif len(seen) < 200 and budget[1]:
+        # rate-limited with nothing cached: fail loudly so the ingest_run is
+        # marked 'failed' and the next run retries instead of skipping as "fresh"
+        raise ContractViolation(
+            f"Yelp discovery hit the rate limit after {len(seen)} businesses and there is "
+            "no cache to fall back on -- retry once the daily quota resets"
+        )
     elif len(seen) >= 200:
         cache.write_text(json.dumps(list(seen.values())))
 
@@ -253,15 +262,21 @@ def run(limit: int = 240, max_age_days: int = 14, rediscover: bool = False) -> N
         return
     with SessionLocal() as s:
         prev = last_successful_run(s, "yelp_discover")
-    stale = (
-        rediscover
-        or prev is None
-        or (prev.finished_at and (datetime.now(UTC) - prev.finished_at).days >= max_age_days)
+    fresh = (
+        not rediscover
+        and prev is not None
+        and prev.kept_count  # a 0-result (rate-limited) run is not a baseline
+        and prev.finished_at
+        and (datetime.now(UTC) - prev.finished_at).days < max_age_days
     )
-    if stale:
-        discover(limit)
+    if fresh:
+        log.info(
+            "discovery is fresh (last run %s, %d kept) -- skipping",
+            prev.finished_at,
+            prev.kept_count,
+        )
     else:
-        log.info("discovery is fresh (last run %s) -- skipping", prev.finished_at)
+        discover(limit)
     link()
 
 
