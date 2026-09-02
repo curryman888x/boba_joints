@@ -232,8 +232,7 @@ class BobaShop(Base):
             name="date_order",
         ),
         CheckConstraint(
-            "identified_by in "
-            "('overture_category', 'name_pattern', 'both', 'propagated')",
+            "identified_by in ('overture_category', 'name_pattern', 'both', 'propagated')",
             name="identified_by",
         ),
     )

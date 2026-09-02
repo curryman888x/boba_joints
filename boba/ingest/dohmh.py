@@ -97,13 +97,10 @@ _IDENTITY_COLS = [
 ]
 
 
-def _where(since: str | None) -> str:
+def _where() -> str:
     clause = " OR ".join(f"upper(dba) like '%{t}%'" for t in _LIKE_TERMS)
     clause += " OR cuisine_description in(" + ",".join(f"'{c}'" for c in _CUISINES) + ")"
-    clause = f"({clause})"
-    if since:
-        clause += f" AND record_date > '{since}'"
-    return clause
+    return f"({clause})"
 
 
 def _fetch(where: str) -> pd.DataFrame:
@@ -233,7 +230,7 @@ def run(refresh: bool = False) -> None:
     # `record_date` is a per-publish dataset timestamp, ~uniform across rows, so
     # it can't drive a row-level incremental cursor. The candidate set is small
     # (~28k rows / ~15s) -- always full-pull; upserts dedupe.
-    raw = _fetch(_where(None))
+    raw = _fetch(_where())
     if raw.empty:
         raise ContractViolation("DOHMH Socrata pull returned nothing")
 

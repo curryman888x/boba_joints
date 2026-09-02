@@ -21,6 +21,7 @@ from sqlalchemy import text
 from boba.config import BOBA_CATEGORIES, BOBA_FALLBACK_CATEGORIES, NYC_BBOX, data_dir
 from boba.contracts import (
     ContractViolation,
+    categories_of,
     drift_warnings,
     ingest_run,
     last_successful_run,
@@ -86,17 +87,9 @@ def _download(release: str | None, out, refresh: bool) -> None:
     log.info("downloaded %.1f MB", out.stat().st_size / 1e6)
 
 
-def _categories_of(v) -> list[str]:
-    if not isinstance(v, dict):
-        return []
-    alt = v.get("alternate")
-    alt = list(alt.tolist()) if hasattr(alt, "tolist") else (list(alt) if alt else [])
-    return [c for c in [v.get("primary") or v.get("main"), *alt] if c]
-
-
 def _prefilter(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     wanted = BOBA_CATEGORIES | BOBA_FALLBACK_CATEGORIES
-    keep = gdf["categories"].map(lambda v: bool(set(_categories_of(v)) & wanted))
+    keep = gdf["categories"].map(lambda v: bool(set(categories_of(v)) & wanted))
     return gdf[keep]
 
 

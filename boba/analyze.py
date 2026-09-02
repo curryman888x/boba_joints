@@ -39,7 +39,7 @@ _BOBA_CAMIS = """
     select camis from place_matches
 """
 
-# best (lowest score) match per CAMIS, for the DOHMH-only / merged join
+# highest-scoring match per CAMIS, for the DOHMH-only / merged join
 _ESTABLISHMENTS = f"""
     select e.camis, e.dba, e.boro, e.boba_name_match,
            e.first_inspection_date, e.last_inspection_date,

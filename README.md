@@ -11,13 +11,14 @@ The original question was "since 2020", but the free sources don't reach that fa
 | Source | Earliest data | Open/close dates? |
 |---|---|---|
 | Overture Places | ~July 2023 | no — snapshot + a current-only `operating_status` |
-| DOHMH inspections | **2022-01-25** (rolling ~3-year window) | first inspection ≈ opened; `Establishment Closed` action is health-dept only (~3 shops) |
+| DOHMH inspections | **2022-01-25** for boba names (dataset itself goes to ~2016) | first inspection ≈ opened; `Establishment Closed` action is health-dept only (~4 shops), so closings also lean on "went silent" |
 
 So the deliverable covers **2022 → 2026**, with confidence bands, and **2020–2021
 is an acknowledged gap**. See `notebooks/00_recap.py` for the full findings.
 
 ## Why
 
+- [docs/pipeline.md](docs/pipeline.md) — the flow, as a diagram, and where the contracts sit
 - [docs/data-sources.md](docs/data-sources.md) — why two sources, why matching, the three shop populations
 - [docs/methodology.md](docs/methodology.md) — how shops are identified and dated, and the limits
 - [docs/decisions.md](docs/decisions.md) — non-obvious infrastructure choices

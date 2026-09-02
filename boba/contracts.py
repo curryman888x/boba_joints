@@ -64,6 +64,13 @@ def _as_list(v: Any) -> list:
     return [v]
 
 
+def categories_of(v: Any) -> list[str]:
+    """Primary + alternate category strings from an Overture `categories` struct."""
+    if not isinstance(v, Mapping):
+        return []
+    return [c for c in [v.get("primary") or v.get("main"), *_as_list(v.get("alternate"))] if c]
+
+
 def _first_dict(seq: Any) -> dict:
     for item in _as_list(seq):
         if isinstance(item, Mapping):
@@ -119,9 +126,8 @@ class OverturePlaceRecord(BaseModel):
                 f"Overture record {d.get('id')!r} is missing the `categories` field entirely"
             )
         cats = _as_dict(d.get("categories"))  # null value is fine: place with no category
-        primary = cats.get("primary") or cats.get("main")
-        d["category_primary"] = primary
-        d["categories_all"] = [c for c in [primary, *_as_list(cats.get("alternate"))] if c]
+        d["category_primary"] = cats.get("primary") or cats.get("main")
+        d["categories_all"] = categories_of(cats)
 
         addr = _first_dict(d.get("addresses"))
         d["addr_freeform"] = addr.get("freeform")
