@@ -19,17 +19,38 @@ There is **no ground-truth list**, so recall is a lower bound. Two mechanisms:
   counts as boba even if its `dba` never hit the regex. Recovers ~71
   establishments the regex alone misses.
 
+### Provenance — `boba_shops.identified_by`
+
+Every shop carries how it was identified, so counts can be reported by
+confidence:
+
+| value | meaning | count | precision-backed by |
+|---|---|---|---|
+| `overture_category` | Overture `bubble_tea` tag, no independent name hit | ~222 | Overture's curated taxonomy |
+| `both` | Overture `bubble_tea` **and** a name match | ~206 | strongest |
+| `name_pattern` | name regex only (Overture fallback name, or DOHMH `dba`) | ~94 | needs vetting |
+| `propagated` | no category or name hit anywhere — pure spatial inference | ~1 | weakest |
+
+So ~428 of 523 rest on Overture's tag; ~94 on the regex alone.
+
 ### Known gaps
 - Independents with no keyword in the name ("Sunright Tea Studio", "O-CHA").
 - Overture places filed under `restaurant` / `chinese_restaurant` (not in the
   fallback set).
 - Regex false positives (e.g. `the alley` once matched "THE ALLEY PIZZA LOUNGE";
   the distance gate in matching removes most).
-- Overture category false positives (a burger place tagged `bubble_tea`).
+- Overture category false positives (e.g. "Poke Cafe" tagged `bubble_tea`).
 
-Planned: `notebooks/03_recall_precision.py` — sample and hand-label ~50 DOHMH
-Coffee/Tea establishments for a recall estimate, and spot-check the match tail.
+### `notebooks/03_recall_precision.py`
+
+A hand-labelling workbench: generates `data/recall_sample.csv`,
+`data/match_review.csv`, `data/boba_set_review.csv`; you fill the blank column;
+recompute cells produce recall (Wilson CI), match-tail precision, and
+per-`identified_by` precision, and list concrete rejects.
+
 Report counts as **"≥ N (name/category identification)"**, never a hard "N".
+The recall universe is DOHMH `cuisine_description = 'Coffee/Tea'` (~2,220
+establishments; the pipeline flags ~175).
 
 ## 2. Matching Overture ↔ DOHMH (`boba/match.py`)
 

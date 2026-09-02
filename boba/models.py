@@ -231,6 +231,11 @@ class BobaShop(Base):
             "opened_date is null or closed_date is null or closed_date >= opened_date",
             name="date_order",
         ),
+        CheckConstraint(
+            "identified_by in "
+            "('overture_category', 'name_pattern', 'both', 'propagated')",
+            name="identified_by",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -249,6 +254,8 @@ class BobaShop(Base):
     closed_date: Mapped[date | None] = mapped_column(Date)
     closed_source: Mapped[str | None] = mapped_column(String)
     status: Mapped[str | None] = mapped_column(String, index=True)  # open | closed | unknown
+    # how this shop was identified as boba: overture_category | name_pattern | both | propagated
+    identified_by: Mapped[str | None] = mapped_column(String, index=True)
     notes: Mapped[str | None] = mapped_column(String)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

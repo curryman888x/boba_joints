@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+from collections import Counter
 
 import pandas as pd
 from sqlalchemy import text
@@ -22,6 +23,7 @@ from sqlalchemy import text
 from boba.config import data_dir
 from boba.contracts import ingest_run
 from boba.db import SessionLocal, engine
+from boba.filters import name_looks_like_boba
 from boba.log import get_logger, setup
 from boba.models import BobaShop, StatusEvent
 
@@ -39,7 +41,8 @@ _BOBA_CAMIS = """
 
 # best (lowest score) match per CAMIS, for the DOHMH-only / merged join
 _ESTABLISHMENTS = f"""
-    select e.camis, e.dba, e.boro, e.first_inspection_date, e.last_inspection_date,
+    select e.camis, e.dba, e.boro, e.boba_name_match,
+           e.first_inspection_date, e.last_inspection_date,
            e.closed_flag, e.closed_date, e.reopened_date,
            st_x(e.geom) lon, st_y(e.geom) lat,
            m.overture_id, m.score
@@ -54,6 +57,7 @@ _ESTABLISHMENTS = f"""
 _OVERTURE = """
     select o.id as overture_id, o.name, o.locality, o.operating_status,
            o.source_update_time, o.first_seen_release, o.last_seen_release,
+           jsonb_exists(o.categories -> 'all', 'bubble_tea') as is_bubble_tea,
            st_x(o.geom) lon, st_y(o.geom) lat,
            m.camis
     from overture_places o
@@ -122,6 +126,20 @@ def _closed(est, ov, today) -> tuple[dt.date | None, str | None, str]:
     return None, None, "open"
 
 
+def _identified_by(ov, est) -> str:
+    has_cat = ov is not None and bool(ov.is_bubble_tea)
+    has_name = (ov is not None and name_looks_like_boba(ov.name)) or (
+        est is not None and bool(est.boba_name_match)
+    )
+    if has_cat and has_name:
+        return "both"
+    if has_cat:
+        return "overture_category"
+    if has_name:
+        return "name_pattern"
+    return "propagated"  # DOHMH establishment labelled boba only via a spatial match
+
+
 def _dates(est, ov, today):
     opened_d, opened_src, prec = _opened(est, ov)
     closed_d, closed_src, status = _closed(est, ov, today)
@@ -163,6 +181,7 @@ def run(since_year: int = SINCE_YEAR) -> None:
                 "closed_date": closed_d,
                 "closed_source": closed_src,
                 "status": status,
+                "identified_by": _identified_by(ov, est),
             }
         )
 
@@ -185,12 +204,15 @@ def run(since_year: int = SINCE_YEAR) -> None:
                 "closed_date": closed_d,
                 "closed_source": closed_src,
                 "status": status,
+                "identified_by": _identified_by(None, est),
             }
         )
 
     merged = sum(1 for s in shops if s["overture_id"] and s["camis"])
     ov_only = sum(1 for s in shops if s["overture_id"] and not s["camis"])
     dohmh_only = sum(1 for s in shops if s["camis"] and not s["overture_id"])
+    by_id = Counter(s["identified_by"] for s in shops)
+    log.info("identified_by: %s", dict(by_id))
     log.info(
         "%d boba shops (%d merged, %d Overture-only, %d DOHMH-only)",
         len(shops),
@@ -226,6 +248,7 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
                 closed_date=r["closed_date"],
                 closed_source=r["closed_source"],
                 status=r["status"],
+                identified_by=r["identified_by"],
             )
             s.add(shop)
             s.flush()
