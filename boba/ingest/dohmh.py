@@ -201,12 +201,11 @@ _RECOMPUTE_SQL = text(
     update dohmh_establishments e set
         first_inspection_date = s.first_insp,
         last_inspection_date  = s.last_insp,
-        last_record_date       = s.last_rec,
-        latest_grade           = s.latest_grade,
-        latest_score           = s.latest_score,
-        closed_flag            = s.ever_closed,
-        closed_date            = s.closed_date,
-        reopened_date          = s.reopened_date
+        latest_grade          = s.latest_grade,
+        latest_score          = s.latest_score,
+        closed_flag           = s.ever_closed,
+        closed_date           = s.closed_date,
+        reopened_date         = s.reopened_date
     from (
         select
             camis,
@@ -220,7 +219,6 @@ _RECOMPUTE_SQL = text(
                 min(inspection_date) filter (where inspection_date is not null)
             ) as first_insp,
             max(inspection_date) as last_insp,
-            max(record_date)     as last_rec,
             -- letter grade / score from the newest row that has one (grades: A/B/C only;
             -- 'P'/'Z'/'N' = pending / not yet graded -> left null)
             (array_agg(grade order by coalesce(grade_date, inspection_date) desc)

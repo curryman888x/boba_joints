@@ -110,7 +110,6 @@ class DohmhEstablishment(Base):
     # Derived from the inspection history (see analyze.py / ingest/dohmh.py):
     first_inspection_date: Mapped[date | None] = mapped_column(Date)  # opened-by proxy
     last_inspection_date: Mapped[date | None] = mapped_column(Date)
-    last_record_date: Mapped[date | None] = mapped_column(Date)
     latest_grade: Mapped[str | None] = mapped_column(String)  # A/B/C, newest graded row
     latest_score: Mapped[float | None] = mapped_column(Float)  # newest score (lower = cleaner)
     closed_flag: Mapped[bool] = mapped_column(Boolean, server_default="false", index=True)
