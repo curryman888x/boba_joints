@@ -1,1 +1,1 @@
-"""boba_joints: NYC boba shops 2022-2026 -- discovery, timeline, current status."""
+"""boba_joints: a current census of NYC boba shops -- location, status, first-observed date."""

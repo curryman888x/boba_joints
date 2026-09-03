@@ -44,7 +44,7 @@ Report counts as **"≥ N (Yelp / name identification)"**, never a hard "N". The
 DOHMH recall universe is `cuisine_description = 'Coffee/Tea'` (~2,220
 establishments; the pipeline flags ~195 of them by name).
 
-## 2. Linking the shop to a timeline (`boba/ingest/yelp.py::link`)
+## 2. Linking the shop to a first-observed date (`boba/ingest/yelp.py::link`)
 
 Discovery gives a shop; linking attaches DOHMH's inspection dates for the *same
 physical shop*. Name comparisons run on a **name key**: lowercase, punctuation →
@@ -82,8 +82,9 @@ the inspection is on/after opening, typically weeks to a quarter late. **Only
 shops with a DOHMH match get a date** — Yelp-only shops (no match, often too new
 to have been inspected) have none.
 
-The year summary is **"first seen per year"**, a proxy for openings. Recent years
-are undercounted (permit gap + no DOHMH match yet), so it's a floor.
+The year summary is **"first observed per year"** — when shops entered the DOHMH
+record, not openings. Recent years are undercounted (permit gap + no DOHMH match
+yet); it's a floor, and not a closings series (there isn't one).
 
 ### `last_seen_date`
 Latest DOHMH inspection for the shop, or null.

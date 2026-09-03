@@ -3,8 +3,9 @@
 `just all`: `db-up → migrate → seed → ingest-dohmh → ingest-yelp → analyze → check`.
 
 Yelp is the **primary discovery source** (its curated `bubbletea` category);
-DOHMH supplies the timeline. Yelp linking runs after DOHMH ingest because it
-matches each Yelp business against the DOHMH points.
+DOHMH supplies the first-observed date. Yelp linking runs after DOHMH ingest
+because it matches each Yelp business against the DOHMH points. The output is a
+current census, not an openings/closings timeline — see [decisions.md](decisions.md).
 
 ```mermaid
 flowchart TD

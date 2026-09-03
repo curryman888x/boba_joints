@@ -7,10 +7,11 @@ One ``boba_shops`` row per real-world shop, from two populations:
 * a boba-name DOHMH CAMIS that isn't in Yelp -- usually a shop that closed before
   Yelp would help
 
-first_seen_date / last_seen_date are *evidence bounds* (DOHMH inspection dates),
-not lifecycle events; closed_date is set only on a real closure signal.
-status + status_basis capture open/closed/unknown and why. Prints a "first seen
-per year" summary and writes data/boba_status.csv.
+This is a **current census**, not an openings/closings timeline: first_seen_date
+/ last_seen_date are *evidence bounds* (DOHMH inspection dates), not lifecycle
+events; closed_date is set only on a rare explicit closure signal.
+status + status_basis capture open/closed/unknown and why. Prints a "first
+observed per year" summary and writes data/boba_status.csv.
 """
 
 from __future__ import annotations
@@ -347,24 +348,20 @@ def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
 def _summary(df: pd.DataFrame, since_year: int, today: dt.date) -> None:
     d = df.copy()
     d["first_seen_year"] = pd.to_datetime(d["first_seen_date"], errors="coerce").dt.year
-    d["closed_year"] = pd.to_datetime(d["closed_date"], errors="coerce").dt.year
     years = list(range(since_year, today.year + 1))
     fs = d["first_seen_year"].value_counts().reindex(years, fill_value=0)
-    cl = d[d["status"] == "closed"]["closed_year"].value_counts().reindex(years, fill_value=0)
 
-    log.info("--- NYC boba shops (first seen = first DOHMH inspection, a proxy) ---")
-    log.info("year   first-seen  closed")
+    log.info("--- NYC boba shops: first observed per year (DOHMH first inspection, a proxy) ---")
     for y in years:
-        log.info("%d   %9d  %6d", y, fs[y], cl[y])
-    opn = d["status"] == "open"
-    with_date = d["first_seen_date"].notna().sum()
+        log.info("%d   %4d", y, fs[y])
+    with_date = int(d["first_seen_date"].notna().sum())
     log.info(
-        "currently: %d open, %d closed, %d unknown  (%d of %d have a first-seen date)",
-        opn.sum(),
+        "census: %d shops -- %d open, %d closed, %d unknown  (%d have a first-observed date)",
+        len(d),
+        (d["status"] == "open").sum(),
         (d["status"] == "closed").sum(),
         (d["status"] == "unknown").sum(),
         with_date,
-        len(d),
     )
     log.info("by borough:\n%s", d.groupby("borough")["status"].value_counts().to_string())
 

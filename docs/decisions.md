@@ -2,6 +2,18 @@
 
 Short log of non-obvious choices. Newest first.
 
+## Reframed: a current census, not an openings/closings timeline
+The original ask was "which NYC boba shops opened or closed, and when (2022–2026)".
+Free data can't support the *when*: no source has real opening dates (DOHMH first
+inspection is a ±1-quarter proxy on ~40% of shops), and closings are essentially
+undateable (DOHMH forced-closures are ~3 and rare; Yelp `is_closed` carries no
+date; inspection silence is deliberately *not* a closure). So the deliverable is
+now **a current census** — where each shop is, whether it's open, and a
+*first-observed* date where DOHMH has an inspection. The year axis (2022–2026) is
+the DOHMH coverage window, not a study period. `first_seen` per year is kept as a
+soft "when shops entered the record" signal; there is no closings-over-time
+claim.
+
 ## Dropped Overture entirely — Yelp + DOHMH only
 Overture's *unique* contribution turned out to be thin: ~28 shops with a brand
 Yelp doesn't have, and ~208 shops that were essentially unverifiable map labels

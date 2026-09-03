@@ -17,7 +17,6 @@ THIS_YEAR = dt.date.today().year
 SINCE = 2022
 
 STATUS_COLOR = {"open": "#26a69a", "closed": "#e57373", "unknown": "#b0bec5"}
-KIND_COLOR = {"first seen": "#26a69a", "closed": "#e57373"}
 ALL_IDENT = ["yelp_category", "name_pattern"]
 VERIFIED = ["dohmh_active", "yelp_open"]
 
@@ -128,7 +127,7 @@ if f_verified:
     f = f[(f["status"] != "open") | (f["status_basis"].isin(VERIFIED))]
 
 fs = f.dropna(subset=["first_seen_date"])
-cl = f[(f["status"] == "closed") & f["closed_date"].notna()]
+cl = f[f["status"] == "closed"]  # believed closed; a date is the exception, not the rule
 
 DATE_COLS = {
     "first_seen_date": st.column_config.DateColumn("first seen", format="YYYY-MM-DD"),
@@ -137,11 +136,11 @@ DATE_COLS = {
 }
 
 # --- header + KPIs --------------------------------------------------
-st.title("🧋 NYC boba joints — 2022–2026")
+st.title("🧋 NYC boba joints — a current census")
 st.caption(
-    "Discovered from Yelp's curated `bubbletea` category; NYC DOHMH inspections supply "
-    "the timeline. Counts are a **lower bound**; **dates are evidence bounds, not "
-    "lifecycle events** (see below)."
+    "Discovered from Yelp's curated `bubbletea` category; NYC DOHMH inspections supply a "
+    "*first-observed* date where available. A snapshot — **not** an openings/closings "
+    "timeline. Counts are a **lower bound**; dates are evidence bounds, not lifecycle events."
 )
 opn = f["status"] == "open"
 verified = opn & f["status_basis"].isin(VERIFIED)
@@ -160,7 +159,7 @@ st.caption(
 
 # --- recent activity -----------------------------------------------
 a1, a2 = st.columns(2)
-a1.markdown("**Most recently first seen**")
+a1.markdown("**Most recently first observed**")
 a1.dataframe(
     fs.nlargest(15, "first_seen_date")[
         ["first_seen_date", "name", "brand", "address", "borough", "first_seen_source"]
@@ -169,93 +168,64 @@ a1.dataframe(
     width="stretch",
     column_config=DATE_COLS,
 )
-a2.markdown("**Most recent closings**")
+a2.markdown("**Believed closed** — no reliable date")
 a2.dataframe(
-    cl.nlargest(15, "closed_date")[
-        ["closed_date", "name", "brand", "address", "borough", "closed_source"]
-    ],
+    cl.sort_values("name")[["name", "brand", "address", "borough", "closed_source"]],
     hide_index=True,
     width="stretch",
-    column_config=DATE_COLS,
 )
 
 tab_tl, tab_map, tab_tbl, tab_dq, tab_chain = st.tabs(
-    ["Timeline", "Map", "Shops", "Data quality", "By chain"]
+    ["First observed", "Map", "Shops", "Data quality", "By chain"]
 )
 
-# --- Timeline ----------------------------------------------------
+# --- First observed --------------------------------------------
 with tab_tl:
+    st.caption(
+        "When shops **entered the DOHMH record** — a proxy for opening, dated by first "
+        "inspection (lags the real opening by the permit gap, ±1 quarter). Not openings, "
+        "and not a closings series — there isn't one."
+    )
     years = list(range(SINCE, THIS_YEAR + 1))
     tl = pd.DataFrame({"year": years})
-    tl["first seen"] = (
+    tl["first observed"] = (
         tl["year"].map(fs["first_seen_date"].dt.year.value_counts()).fillna(0).astype(int)
     )
-    tl["closed"] = tl["year"].map(cl["closed_date"].dt.year.value_counts()).fillna(0).astype(int)
-
-    long = tl.melt("year", ["first seen", "closed"], "kind", "count")
-    fig = px.bar(
-        long,
-        x="year",
-        y="count",
-        color="kind",
-        barmode="group",
-        color_discrete_map=KIND_COLOR,
-        height=320,
-    )
-    fig.update_layout(legend_title_text="", xaxis_title="", margin=dict(t=10, b=0))
+    fig = px.bar(tl, x="year", y="first observed", height=300, color_discrete_sequence=["#26a69a"])
+    fig.update_layout(xaxis_title="", yaxis_title="", margin=dict(t=10, b=0))
     st.plotly_chart(fig, width="stretch")
-    st.caption(
-        "'first seen' ≈ openings but dated by first inspection (lags, ±1 quarter). "
-        "'closed' is a DOHMH forced-closure or Yelp `is_closed` — noisy and lagging. "
-        "Inspection silence is *unknown*, not closed."
-    )
-    st.dataframe(tl.set_index("year"), width="stretch")
 
-    st.markdown("**Every first-seen / closing on a date axis** — click a borough to hide it")
-    ev = pd.concat(
-        [
-            fs.assign(kind="first seen", date=fs["first_seen_date"]),
-            cl.assign(kind="closed", date=cl["closed_date"]),
-        ]
-    )[["date", "kind", "name", "brand", "borough"]]
+    st.markdown("**Every first-observed date on an axis** — click a borough to hide it")
+    ev = fs[["first_seen_date", "name", "brand", "borough"]].rename(
+        columns={"first_seen_date": "date"}
+    )
     ev["brand"] = ev["brand"].fillna("")
     fig = px.strip(
         ev,
         x="date",
-        y="kind",
+        y="borough",
         color="borough",
         hover_name="name",
-        hover_data={"brand": True, "date": "|%Y-%m-%d", "kind": False},
+        hover_data={"brand": True, "date": "|%Y-%m-%d", "borough": False},
         stripmode="overlay",
-        height=260,
+        height=280,
     )
     fig.update_traces(marker={"size": 7, "opacity": 0.6}, jitter=0.8)
     fig.update_layout(xaxis_title="", yaxis_title="", legend_title_text="", margin=dict(t=10, b=0))
     st.plotly_chart(fig, width="stretch")
 
-    yr = st.selectbox("List shops for year", years[::-1])
-    d1, d2 = st.columns(2)
-    d1.markdown(f"**First seen in {yr}**")
-    d1.dataframe(
+    yr = st.selectbox("List shops first observed in year", years[::-1])
+    st.dataframe(
         fs[fs["first_seen_date"].dt.year == yr][
-            ["first_seen_date", "name", "brand", "address", "borough", "first_seen_source"]
+            ["first_seen_date", "name", "brand", "address", "borough", "status"]
         ].sort_values("first_seen_date"),
         hide_index=True,
         width="stretch",
         column_config=DATE_COLS,
     )
-    d2.markdown(f"**Closed in {yr}**")
-    d2.dataframe(
-        cl[cl["closed_date"].dt.year == yr][
-            ["closed_date", "name", "brand", "address", "borough", "closed_source"]
-        ].sort_values("closed_date"),
-        hide_index=True,
-        width="stretch",
-        column_config=DATE_COLS,
-    )
     st.info(
-        f"{int(f['first_seen_date'].isna().sum())} filtered shops have no first-seen date "
-        "(no DOHMH match) and are absent from the timeline."
+        f"{int(f['first_seen_date'].isna().sum())} of {len(f)} filtered shops have no "
+        "first-observed date (no DOHMH match) and are absent from this tab."
     )
 
 # --- Map -------------------------------------------------------

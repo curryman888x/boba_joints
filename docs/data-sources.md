@@ -2,11 +2,13 @@
 
 ## The question
 
-"Which NYC boba shops opened or closed, and roughly when?"
+"What NYC boba shops are there right now, where are they, are they open, and —
+where we can tell — roughly when did each start operating?"
 
-Answering it needs: **a boba label**, **a location**, **a rough timeline**, and
-**a current-status check**. Yelp covers the first, second and fourth; DOHMH is
-the only timeline.
+That needs: **a boba label**, **a location**, **a current-status check**, and a
+**first-observed date** where one is available. Yelp covers the first three;
+DOHMH supplies the date. There is **no closings-over-time** claim — see
+[decisions.md](decisions.md).
 
 ## What each source has
 
@@ -25,11 +27,11 @@ restaurants that merely serve boba — and gets `is_closed` for free. ~446 NYC
 businesses. The raw sweep is cached to `data/yelp_raw_last.json` (the free tier is
 ~500 calls/day; a later rate-limited run rebuilds from the cache).
 
-**DOHMH** is the only timeline. First inspection lags the true opening by the
-permit gap; an explicit "Establishment Closed by DOHMH" action is a dated event,
-but plain inspection silence is *not* treated as a closure. The name regex on
-`dba` also finds a tail of boba-named permits Yelp doesn't list — mostly shops
-that closed before Yelp would help.
+**DOHMH** supplies the first-observed date. First inspection lags the true
+opening by the permit gap; an explicit "Establishment Closed by DOHMH" action is
+a dated event, but plain inspection silence is *not* treated as a closure. The
+name regex on `dba` also finds a tail of boba-named permits Yelp doesn't list —
+mostly older/closed shops.
 
 ## Why we still link
 
@@ -56,4 +58,5 @@ collapse, keeping the richest.
 ## Coverage: 2022–2026
 
 DOHMH's boba‑name inspection records start 2022‑01‑25; Yelp has no dates at all.
-So the timeline covers **2022 → 2026** and doesn't reach earlier.
+So a first-observed date can reach back to **2022** at the earliest — that's the
+window, not a study period.

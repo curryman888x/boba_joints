@@ -1,23 +1,30 @@
 # boba_joints
 
-NYC boba shops 2022–2026: when each was first seen, and whether it's open now —
-discovered from **Yelp**'s curated `bubbletea` category, with **NYC DOHMH
-inspections** for the rough timeline.
+**A current census of NYC boba shops** — where each is, whether it's open, and
+(where NYC DOHMH has an inspection) roughly when it was first operating.
+Discovered from **Yelp**'s curated `bubbletea` category, dated from **NYC DOHMH
+inspections**.
+
+This is *not* an openings/closings timeline — free data can't support one (see
+[docs/decisions.md](docs/decisions.md)). It's a snapshot with a soft
+first-observed date attached where available.
 
 ## Scope & honesty
 
 - **Yelp's `bubbletea` category is the primary shop list** (hand-curated by Yelp,
   carries `is_closed` for free). A name regex on the DOHMH `dba` adds a tail of
-  boba-named health permits Yelp doesn't list — mostly older closures.
-- **No source has real opening/closing dates.** DOHMH is *inspection* data — the
-  first inspection lags the true opening by the permit gap, so `first_seen_date`
-  reads as "operating by this date, ±1 quarter", not "opened on". Only shops with
-  a DOHMH match get one; Yelp-only shops (often too new to have been inspected)
-  have no first-seen date at all.
-- **Inspection silence is not a closure.** A shop with no inspection in 18+ months
-  and no other signal is `unknown`, not `closed`.
-- **Coverage is 2022–2026.** DOHMH's boba-name inspection records start
-  2022‑01‑25, so the timeline doesn't reach earlier.
+  boba-named health permits Yelp doesn't list — mostly older/closed shops.
+- **No source has real opening dates.** DOHMH is *inspection* data — the first
+  inspection lags the true opening by the permit gap, so `first_seen_date` reads
+  as "operating by this date, ±1 quarter", not "opened on". Only shops with a
+  DOHMH match (~40%) get one; Yelp-only shops (often too new to have been
+  inspected) have none.
+- **Closings are essentially undateable.** DOHMH forced-closures are rare (~3);
+  Yelp `is_closed` has no date; inspection silence is `unknown`, *not* a closure.
+  So `status` distinguishes open / closed / unknown, but there is no
+  closings-over-time series.
+- **The 2022–2026 window** is DOHMH's boba-name inspection coverage
+  (starts 2022‑01‑25), i.e. how far back a first-observed date can reach.
 - Every count is a **lower bound** — shops are identified by category/name, not a
   ground-truth list.
 
