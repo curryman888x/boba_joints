@@ -28,6 +28,15 @@ INVARIANTS: list[tuple[str, str]] = [
         "and first_inspection_date > last_inspection_date",
     ),
     (
+        "dohmh latest_grade is a real letter grade",
+        "select count(*) from dohmh_establishments "
+        "where latest_grade is not null and latest_grade not in ('A', 'B', 'C')",
+    ),
+    (
+        "dohmh latest_score is non-negative",
+        "select count(*) from dohmh_establishments where latest_score < 0",
+    ),
+    (
         "boba_shops.status in (open,closed,unknown)",
         "select count(*) from boba_shops where status not in ('open', 'closed', 'unknown')",
     ),

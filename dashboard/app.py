@@ -72,6 +72,7 @@ def load_shops() -> pd.DataFrame:
                        y.address
                    ) as address,
                    y.rating as yelp_rating, y.review_count as yelp_reviews, y.url as yelp_url,
+                   e.latest_grade as health_grade, e.latest_score as health_score,
                    st_x(s.geom) as lon, st_y(s.geom) as lat
             from boba_shops s
             left join dohmh_establishments e on e.camis = s.camis
@@ -287,6 +288,8 @@ with tab_tbl:
         "identified_by",
         "yelp_rating",
         "yelp_reviews",
+        "health_grade",
+        "health_score",
     ]
     view = f[cols].sort_values("first_seen_date", ascending=False, na_position="last")
     st.dataframe(view, width="stretch", hide_index=True, column_config=DATE_COLS)
@@ -326,6 +329,53 @@ with tab_dq:
         "inspection and nothing else says open → *unknown*, not closed."
     )
 
+    g1, g2 = st.columns(2)
+    with g1:
+        st.subheader("DOHMH health grade")
+        gd = (
+            f["health_grade"]
+            .fillna("pending / none")
+            .value_counts()
+            .rename_axis("grade")
+            .reset_index(name="n")
+        )
+        st.plotly_chart(
+            px.bar(
+                gd,
+                x="grade",
+                y="n",
+                height=240,
+                color="grade",
+                color_discrete_map={"A": "#26a69a", "B": "#ffb74d", "C": "#e57373"},
+            ).update_layout(
+                xaxis_title="", yaxis_title="", showlegend=False, margin=dict(t=10, b=0)
+            ),
+            width="stretch",
+        )
+        st.caption("Latest letter grade from the shop's DOHMH inspection history (A/B/C only).")
+    with g2:
+        st.subheader("Health score vs Yelp rating")
+        hs = f.dropna(subset=["health_score", "yelp_rating"])
+        if len(hs):
+            st.plotly_chart(
+                px.scatter(
+                    hs,
+                    x="health_score",
+                    y="yelp_rating",
+                    hover_name="name",
+                    color="health_grade",
+                    height=240,
+                    color_discrete_map={"A": "#26a69a", "B": "#ffb74d", "C": "#e57373"},
+                ).update_layout(margin=dict(t=10, b=0), legend_title_text=""),
+                width="stretch",
+            )
+            st.caption(
+                f"{len(hs)} shops have both. Health score is violation points — **lower is "
+                "cleaner** (A ≈ 0–13). Weak relationship expected: hygiene ≠ vibe."
+            )
+        else:
+            st.info("No shops with both a health score and a Yelp rating in this filter.")
+
     st.subheader("Ingest manifest")
     st.dataframe(load_manifest(), width="stretch", hide_index=True)
 
@@ -338,11 +388,20 @@ with tab_chain:
             shops=("id", "count"),
             open=("status", lambda s: (s == "open").sum()),
             closed=("status", lambda s: (s == "closed").sum()),
+            avg_rating=("yelp_rating", "mean"),
+            pct_grade_A=(
+                "health_grade",
+                lambda s: (
+                    round(100 * s.eq("A").sum() / s.notna().sum()) if s.notna().any() else None
+                ),
+            ),
+            avg_health_score=("health_score", "mean"),
             earliest_seen=("first_seen_date", "min"),
             latest_seen=("first_seen_date", "max"),
         )
         .sort_values("shops", ascending=False)
         .head(25)
+        .round({"avg_rating": 2, "avg_health_score": 1})
     )
     st.dataframe(
         ch,

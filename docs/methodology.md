@@ -112,5 +112,13 @@ dates and its own explicit closure actions, nothing more.
 
 `first_seen > closed` contradictions drop the weaker `first_seen`.
 
+### Health grade / score
+`dohmh_establishments.latest_grade` (A/B/C, from the newest graded inspection) and
+`latest_score` (violation points at the newest scored inspection, **lower is
+cleaner** — A ≈ 0–13) are recomputed in `ingest/dohmh.py::_RECOMPUTE_SQL`. Only
+shops with a DOHMH match carry them (~55%). Surfaced in the dashboard's Shops
+table, the by-chain rollup, and a grade-vs-Yelp-rating scatter — a hygiene axis,
+independent of the census logic.
+
 ### Output
 `data/boba_status.csv` and the year summary.

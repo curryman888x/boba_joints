@@ -77,6 +77,8 @@ def upgrade() -> None:
         sa.Column("first_inspection_date", sa.Date(), nullable=True),
         sa.Column("last_inspection_date", sa.Date(), nullable=True),
         sa.Column("last_record_date", sa.Date(), nullable=True),
+        sa.Column("latest_grade", sa.String(), nullable=True),
+        sa.Column("latest_score", sa.Float(), nullable=True),
         sa.Column("closed_flag", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("closed_date", sa.Date(), nullable=True),
         sa.Column("reopened_date", sa.Date(), nullable=True),

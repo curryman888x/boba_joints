@@ -202,6 +202,8 @@ _RECOMPUTE_SQL = text(
         first_inspection_date = s.first_insp,
         last_inspection_date  = s.last_insp,
         last_record_date       = s.last_rec,
+        latest_grade           = s.latest_grade,
+        latest_score           = s.latest_score,
         closed_flag            = s.ever_closed,
         closed_date            = s.closed_date,
         reopened_date          = s.reopened_date
@@ -219,6 +221,12 @@ _RECOMPUTE_SQL = text(
             ) as first_insp,
             max(inspection_date) as last_insp,
             max(record_date)     as last_rec,
+            -- letter grade / score from the newest row that has one (grades: A/B/C only;
+            -- 'P'/'Z'/'N' = pending / not yet graded -> left null)
+            (array_agg(grade order by coalesce(grade_date, inspection_date) desc)
+                filter (where grade in ('A', 'B', 'C')))[1] as latest_grade,
+            (array_agg(score order by inspection_date desc)
+                filter (where score is not null))[1] as latest_score,
             coalesce(bool_or(action ilike 'Establishment Closed by DOHMH%'), false) as ever_closed,
             min(inspection_date) filter (where action ilike 'Establishment Closed by DOHMH%')
                 as closed_date,
