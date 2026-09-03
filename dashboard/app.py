@@ -143,17 +143,16 @@ st.caption(
     "*first-observed* date where available. A snapshot — **not** an openings/closings "
     "timeline. Counts are a **lower bound**; dates are evidence bounds, not lifecycle events."
 )
-opn = f["status"] == "open"
-verified = opn & f["status_basis"].isin(VERIFIED)
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Boba shops", len(f))
-k2.metric("Open · verified", int(verified.sum()))
+k2.metric("Open", int((f["status"] == "open").sum()))
 k3.metric("Closed", int((f["status"] == "closed").sum()))
 k4.metric("Unknown", int((f["status"] == "unknown").sum()))
+k5.metric("With a first-seen date", int(f["first_seen_date"].notna().sum()))
 st.caption(
     ":grey[**first seen** = first DOHMH health inspection — this *lags* the real opening by "
     "the permit gap, so read it as *operating by* this date, ±1 quarter. Only shops with a "
-    "DOHMH match have one. **verified** = a DOHMH inspection within ~18 months, or Yelp "
+    "DOHMH match have one. **open** = a DOHMH inspection within ~18 months or Yelp "
     "`is_closed=false`. **unknown** = no positive signal (a stale record can't be told from "
     "a live one).]"
 )
@@ -238,6 +237,8 @@ with tab_map:
     m["brand"] = m["brand"].fillna("")
     m["first_seen"] = m["first_seen_date"].dt.strftime("%Y-%m-%d").fillna("—")
     m["closed"] = m["closed_date"].dt.strftime("%Y-%m-%d").fillna("—")
+    m["rating"] = m["yelp_rating"].fillna("—").astype(str)
+    m["grade"] = m["health_grade"].fillna("—")
     fig = px.scatter_map(
         m,
         lat="lat",
@@ -252,6 +253,8 @@ with tab_map:
             "status_basis": True,
             "first_seen": True,
             "closed": True,
+            "rating": True,
+            "grade": True,
             "lat": False,
             "lon": False,
         },
@@ -375,6 +378,34 @@ with tab_dq:
             )
         else:
             st.info("No shops with both a health score and a Yelp rating in this filter.")
+
+    st.subheader("Yelp ratings")
+    rated = f.dropna(subset=["yelp_rating"])
+    if len(rated):
+        r1, r2 = st.columns([2, 3])
+        with r1:
+            st.plotly_chart(
+                px.histogram(rated, x="yelp_rating", nbins=9, height=240).update_layout(
+                    xaxis_title="rating", yaxis_title="", margin=dict(t=10, b=0)
+                ),
+                width="stretch",
+            )
+            st.caption(
+                f"{len(rated)} of {len(f)} shops carry a Yelp rating "
+                f"(median {rated['yelp_rating'].median():.1f})."
+            )
+        with r2:
+            popular = rated[rated["yelp_reviews"] >= 20]
+            st.markdown("**Highest rated** (≥ 20 reviews)")
+            st.dataframe(
+                popular.nlargest(8, "yelp_rating")[
+                    ["name", "brand", "borough", "yelp_rating", "yelp_reviews"]
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+    else:
+        st.info("No rated shops in this filter.")
 
     st.subheader("Ingest manifest")
     st.dataframe(load_manifest(), width="stretch", hide_index=True)
