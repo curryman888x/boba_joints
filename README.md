@@ -5,6 +5,10 @@
 Discovered from **Yelp**'s curated `bubbletea` category, dated from **NYC DOHMH
 inspections**.
 
+**[Live dashboard →](https://bobajoints-dhemy8pwj2epnyv2iyv9je.streamlit.app/)**
+Refreshed weekly by a GitHub Actions cron (`.github/workflows/pipeline.yml`)
+against a persistent Neon Postgres.
+
 ## Why it's built this way
 
 - [docs/pipeline.md](docs/pipeline.md) — the flow as a diagram, and where the contracts sit
