@@ -6,6 +6,7 @@ dependencies = [
     "alembic>=1.19.1",
     "geoalchemy2>=0.20.0",
     "pandera[pandas]>=0.33.1",
+    "plotly>=7.0.0",
     "psycopg2-binary>=2.9.12",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
@@ -13,6 +14,7 @@ dependencies = [
     "requests>=2.34.2",
     "shapely>=2.0.0",
     "sqlalchemy>=2.0.52",
+    "streamlit>=1.63.0",
 ]
 
 [build-system]
@@ -23,10 +25,6 @@ build-backend = "hatchling.build"
 packages = ["boba"]
 
 [dependency-groups]
-dashboard = [
-    "plotly>=7.0.0",
-    "streamlit>=1.63.0",
-]
 dev = [
     "pytest>=8.3",
     "ruff>=0.9",

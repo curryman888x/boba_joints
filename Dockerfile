@@ -11,13 +11,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # dependency layer (cached unless pyproject/uv.lock change)
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-install-project --group dashboard
+RUN uv sync --frozen --no-install-project
 
 COPY boba ./boba
 COPY dashboard ./dashboard
-RUN uv sync --frozen --group dashboard
+RUN uv sync --frozen
 
 EXPOSE 8501
-CMD ["uv", "run", "--group", "dashboard", "streamlit", "run", "dashboard/app.py", \
+CMD ["uv", "run", "streamlit", "run", "dashboard/app.py", \
      "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true", \
      "--browser.gatherUsageStats=false"]

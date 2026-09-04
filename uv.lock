@@ -213,6 +213,7 @@ dependencies = [
     { name = "alembic" },
     { name = "geoalchemy2" },
     { name = "pandera", extra = ["pandas"] },
+    { name = "plotly" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -220,13 +221,10 @@ dependencies = [
     { name = "requests" },
     { name = "shapely" },
     { name = "sqlalchemy" },
+    { name = "streamlit" },
 ]
 
 [package.dev-dependencies]
-dashboard = [
-    { name = "plotly" },
-    { name = "streamlit" },
-]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -242,6 +240,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.19.1" },
     { name = "geoalchemy2", specifier = ">=0.20.0" },
     { name = "pandera", extras = ["pandas"], specifier = ">=0.33.1" },
+    { name = "plotly", specifier = ">=7.0.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.12" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
@@ -249,13 +248,10 @@ requires-dist = [
     { name = "requests", specifier = ">=2.34.2" },
     { name = "shapely", specifier = ">=2.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.52" },
+    { name = "streamlit", specifier = ">=1.63.0" },
 ]
 
 [package.metadata.requires-dev]
-dashboard = [
-    { name = "plotly", specifier = ">=7.0.0" },
-    { name = "streamlit", specifier = ">=1.63.0" },
-]
 dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.9" },

@@ -77,7 +77,7 @@ dashboard:
 
 # Serve the dashboard from the host instead (no container build)
 dashboard-local:
-    uv run --group dashboard streamlit run dashboard/app.py
+    uv run streamlit run dashboard/app.py
 
 # --- pipeline ---------------------------------------------------------
 
