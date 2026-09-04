@@ -1,0 +1,16 @@
+# For Streamlit Community Cloud, which installs via pip and doesn't read
+# pyproject.toml's [dependency-groups] (a uv-specific mechanism). Local dev
+# still uses `uv sync` / `just dashboard-local` -- this file exists only for
+# the hosted dashboard deploy.
+alembic>=1.19.1
+geoalchemy2>=0.20.0
+pandera[pandas]>=0.33.1
+psycopg2-binary>=2.9.12
+pydantic>=2.13.5
+python-dotenv>=1.2.3
+rapidfuzz>=3.14.6
+requests>=2.34.2
+shapely>=2.0.0
+sqlalchemy>=2.0.52
+plotly>=7.0.0
+streamlit>=1.63.0
