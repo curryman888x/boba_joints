@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
 
 import pandas as pd
@@ -10,7 +11,18 @@ import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 
-from boba.db import engine
+# Streamlit Cloud's "Secrets" settings land in st.secrets, not automatically
+# in os.environ -- boba/config.py (shared with the CLI pipeline) reads
+# DATABASE_URL via os.environ, so bridge root-level secrets across before
+# importing boba.db. try/except: st.secrets raises if no secrets.toml exists
+# at all, which is the normal case for local/Docker dev.
+try:
+    for _key, _value in st.secrets.items():
+        os.environ.setdefault(_key, str(_value))
+except Exception:
+    pass
+
+from boba.db import engine  # noqa: E402
 
 st.set_page_config(page_title="NYC boba joints", page_icon="🧋", layout="wide")
 THIS_YEAR = dt.date.today().year
