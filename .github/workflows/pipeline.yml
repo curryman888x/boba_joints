@@ -1,0 +1,43 @@
+name: pipeline
+
+# Weekly refresh of the boba census against the persistent Neon database.
+# A full Yelp discovery sweep costs ~195-240 calls of the 500/UTC-day free
+# quota (see ingest_runs.detail), so a weekly cadence has ample headroom.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch: {} # allow manual trigger from the Actions tab
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      YELP_API_KEY: ${{ secrets.YELP_API_KEY }}
+      SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: Migrate schema
+        run: uv run alembic upgrade head
+
+      - name: Seed boroughs (idempotent)
+        run: uv run python -m boba.seed
+
+      - name: DOHMH ingest
+        run: uv run python -m boba.ingest.dohmh
+
+      - name: Yelp ingest
+        run: uv run python -m boba.ingest.yelp
+
+      - name: Analyze -> boba_shops
+        run: uv run python -m boba.analyze
+
+      - name: Post-pipeline invariants
+        run: uv run python -m boba.checks
