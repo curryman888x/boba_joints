@@ -5,29 +5,6 @@
 Discovered from **Yelp**'s curated `bubbletea` category, dated from **NYC DOHMH
 inspections**.
 
-This is *not* an openings/closings timeline — free data can't support one (see
-[docs/decisions.md](docs/decisions.md)). It's a snapshot with a soft
-first-observed date attached where available.
-
-## Scope & honesty
-
-- **Yelp's `bubbletea` category is the primary shop list** (hand-curated by Yelp,
-  carries `is_closed` for free). A name regex on the DOHMH `dba` adds a tail of
-  boba-named health permits Yelp doesn't list — mostly older/closed shops.
-- **No source has real opening dates.** DOHMH is *inspection* data — the first
-  inspection lags the true opening by the permit gap, so `first_seen_date` reads
-  as "operating by this date, ±1 quarter", not "opened on". Only shops with a
-  DOHMH match (~40%) get one; Yelp-only shops (often too new to have been
-  inspected) have none.
-- **Closings are essentially undateable.** DOHMH forced-closures are rare (~3);
-  Yelp `is_closed` has no date; inspection silence is `unknown`, *not* a closure.
-  So `status` distinguishes open / closed / unknown, but there is no
-  closings-over-time series.
-- **The 2022–2026 window** is DOHMH's boba-name inspection coverage
-  (starts 2022‑01‑25), i.e. how far back a first-observed date can reach.
-- Every count is a **lower bound** — shops are identified by category/name, not a
-  ground-truth list.
-
 ## Why it's built this way
 
 - [docs/pipeline.md](docs/pipeline.md) — the flow as a diagram, and where the contracts sit
