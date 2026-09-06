@@ -3,7 +3,14 @@ from __future__ import annotations
 import datetime as dt
 from types import SimpleNamespace
 
-from boba.analyze import _closed, _dedup, _first_seen, _haversine_m, _identified_by
+from boba.analyze import (
+    _census_collapsed,
+    _closed,
+    _dedup,
+    _first_seen,
+    _haversine_m,
+    _identified_by,
+)
 
 TODAY = dt.date(2026, 9, 1)
 
@@ -139,3 +146,12 @@ def test_dedup_keeps_distinct_locations():
     a = _shop("Come Buy", -73.997, 40.7376)
     b = _shop("Come Buy", -73.987, 40.7448)  # ~1.2 km away
     assert len(_dedup([a, b])) == 2
+
+
+def test_census_collapse_guard():
+    assert _census_collapsed(60, 100)  # -40% vs last good run -> collapsed
+    assert not _census_collapsed(70, 100)  # exactly -30% -> allowed
+    assert not _census_collapsed(75, 100)  # -25% -> normal churn
+    assert not _census_collapsed(140, 100)  # growth
+    assert not _census_collapsed(5, None)  # no baseline -> nothing to compare
+    assert not _census_collapsed(5, 0)  # no baseline

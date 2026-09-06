@@ -8,6 +8,12 @@ on:
     - cron: "0 6 * * 1" # Monday 06:00 UTC
   workflow_dispatch: {} # allow manual trigger from the Actions tab
 
+# never let a manual run overlap the scheduled one -- they share the Neon DB
+# and the Yelp daily quota. A second run queues behind the first.
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest

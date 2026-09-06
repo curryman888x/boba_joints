@@ -24,7 +24,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from boba.config import data_dir
-from boba.contracts import ingest_run
+from boba.contracts import ContractViolation, ingest_run, last_successful_run
 from boba.db import SessionLocal, engine
 from boba.log import get_logger, setup
 from boba.models import BobaShop
@@ -33,6 +33,9 @@ log = get_logger("boba.analyze")
 
 SINCE_YEAR = 2022  # DOHMH inspection history floor; nothing credible before this
 INACTIVE_DAYS = 550  # no inspection in ~18 months => stale record, status can't be told
+# a census this much smaller than the last good run is treated as a broken
+# upstream ingest, not a real change -- fail before overwriting boba_shops
+MAX_CENSUS_SHRINK = 0.30
 
 # CAMIS in play: boba-name, or linked from a Yelp business
 _BOBA_CAMIS = """
@@ -301,11 +304,24 @@ def run(since_year: int = SINCE_YEAR) -> None:
     _write(shops, since_year, today)
 
 
+def _census_collapsed(n_new: int, prev_kept: int | None) -> bool:
+    """A run producing far fewer shops than the last good one is a broken
+    upstream ingest, not a real change. No baseline -> nothing to compare."""
+    return bool(prev_kept) and n_new < (1 - MAX_CENSUS_SHRINK) * prev_kept
+
+
 def _write(shops: list[dict], since_year: int, today: dt.date) -> None:
     from geoalchemy2.shape import from_shape
     from shapely.geometry import Point
 
     with SessionLocal() as s, ingest_run(s, "analyze") as m:
+        prev = last_successful_run(s, "analyze")
+        if prev and _census_collapsed(len(shops), prev.kept_count):
+            raise ContractViolation(
+                f"census collapsed: {prev.kept_count} -> {len(shops)} shops "
+                f"({len(shops) / prev.kept_count - 1:+.0%} vs {prev.started_at:%Y-%m-%d}) -- "
+                "refusing to overwrite boba_shops; check the DOHMH / Yelp ingests"
+            )
         s.execute(text("truncate boba_shops restart identity cascade"))
         for r in shops:
             lon, lat = r["lon"], r["lat"]
