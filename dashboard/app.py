@@ -31,6 +31,7 @@ SINCE = 2022
 STATUS_COLOR = {"open": "#26a69a", "closed": "#e57373", "unknown": "#b0bec5"}
 ALL_IDENT = ["yelp_category", "name_pattern"]
 VERIFIED = ["dohmh_active", "yelp_open"]
+STALE_DAYS = 10  # a weekly pipeline whose newest run is older than this is flagged
 
 # Canonical chain names, matched against the shop name (brand is not a stored
 # field -- Overture used to supply it; now we derive it for the big chains).
@@ -168,6 +169,25 @@ st.caption(
     "`is_closed=false`. **unknown** = no positive signal (a stale record can't be told from "
     "a live one).]"
 )
+
+# --- pipeline freshness (this page auto-refreshes off a weekly cron) ---
+_mani = load_manifest()
+if len(_mani):
+    _last = pd.to_datetime(_mani["finished_at"], utc=True).max()
+    _failed = sorted(_mani.loc[_mani["status"] == "failed", "source"])
+    _age = None if pd.isna(_last) else (pd.Timestamp.now(tz="UTC") - _last).days
+    _asof = (
+        "Pipeline has not completed a run yet"
+        if _age is None
+        else f"Data as of {_last.date()} — pipeline last ran "
+        f"{_age} day{'' if _age == 1 else 's'} ago"
+    )
+    if _failed:
+        st.warning(f"{_asof}. Last run **failed** for: {', '.join(_failed)}.")
+    elif _age is not None and _age > STALE_DAYS:
+        st.warning(f"{_asof} — stale (a weekly refresh is expected).")
+    else:
+        st.caption(f":grey[{_asof}.]")
 
 # --- recent activity -----------------------------------------------
 a1, a2 = st.columns(2)
@@ -419,8 +439,34 @@ with tab_dq:
     else:
         st.info("No rated shops in this filter.")
 
-    st.subheader("Ingest manifest")
-    st.dataframe(load_manifest(), width="stretch", hide_index=True)
+    st.subheader("Pipeline health")
+    mh = load_manifest().copy()
+    if len(mh):
+        now = pd.Timestamp.now(tz="UTC")
+        mh["last run"] = pd.to_datetime(mh["finished_at"], utc=True).dt.strftime("%Y-%m-%d %H:%M")
+        mh["age (days)"] = (now - pd.to_datetime(mh["finished_at"], utc=True)).dt.days
+        mh["ok"] = (
+            mh["status"].map({"ok": "✅", "failed": "❌", "running": "…"}).fillna(mh["status"])
+        )
+
+        def _note(detail: object) -> str:
+            d = detail if isinstance(detail, dict) else {}
+            keys = ("missing_from_sweep", "verify_calls", "newly_closed", "gone_404", "swept")
+            return ", ".join(f"{k}={d[k]}" for k in keys if d.get(k))
+
+        mh["notes"] = mh["detail"].map(_note)
+        st.dataframe(
+            mh[["source", "ok", "last run", "age (days)", "row_count", "kept_count", "notes"]],
+            width="stretch",
+            hide_index=True,
+        )
+        st.caption(
+            ":grey[One row per source, newest run only. An **age** past ~7 days means that "
+            "source's weekly job hasn't landed. `newly_closed` / `gone_404` are shops Yelp "
+            "confirmed closed since the previous sweep.]"
+        )
+    else:
+        st.info("No ingest runs recorded yet.")
 
 # --- By chain ----------------------------------------------
 with tab_chain:

@@ -15,8 +15,14 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       YELP_API_KEY: ${{ secrets.YELP_API_KEY }}
       SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+      # Optional healthchecks.io dead-man's-switch. Inert until the secret is set.
+      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Signal start
+        if: ${{ env.HEALTHCHECK_URL != '' }}
+        run: curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL/start" || true
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -41,3 +47,11 @@ jobs:
 
       - name: Post-pipeline invariants
         run: uv run python -m boba.checks
+
+      - name: Signal success
+        if: ${{ success() && env.HEALTHCHECK_URL != '' }}
+        run: curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" || true
+
+      - name: Signal failure
+        if: ${{ failure() && env.HEALTHCHECK_URL != '' }}
+        run: curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL/fail" || true

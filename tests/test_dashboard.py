@@ -36,8 +36,9 @@ _SEED = [
           '2022-01-01', 'dohmh_first_inspection', '2025-06-01',
           'open', 'yelp_open', 'yelp_category')""",
     """insert into ingest_runs
-         (source, status, started_at, finished_at, row_count, kept_count)
-       values ('yelp_discover', 'ok', now(), now(), 500, 460)""",
+         (source, status, started_at, finished_at, row_count, kept_count, detail)
+       values ('yelp_discover', 'ok', now(), now(), 500, 460,
+               '{"missing_from_sweep": 3, "verify_calls": 3, "newly_closed": 1}'::jsonb)""",
 ]
 
 _CLEANUP = [
