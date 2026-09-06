@@ -63,3 +63,8 @@ SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN") or None
 # Free key at https://www.yelp.com/developers  (~500 calls/day).
 YELP_API_KEY = os.environ.get("YELP_API_KEY") or None
 YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search"
+# /search deprioritises closed businesses (unevenly, and is_closed itself is a
+# bit unreliable there); /businesses/{id} still returns one we already know by
+# id -- used to verify a business that dropped out of a sweep before calling it
+# closed (boba/ingest/yelp.py::discover).
+YELP_BUSINESS_URL = "https://api.yelp.com/v3/businesses"

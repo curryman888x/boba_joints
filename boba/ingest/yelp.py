@@ -7,6 +7,15 @@ Each result carries ``is_closed`` (free current status). -> ``yelp_businesses``.
 ``link``: match each Yelp business to a DOHMH CAMIS (for a first-seen date) by
 name + distance. -> ``yelp_matches``.
 
+A business missing from a fresh sweep is *ambiguous* -- equally "closed" and
+"the depth-limited adaptive grid just missed it," and Yelp's search also
+deprioritises closed listings unevenly. So ``discover`` never deletes or
+marks-closed on absence alone: each previously-known id absent from the sweep
+is re-checked individually via ``/businesses/{id}`` (spending only leftover
+call budget), and only a confirmed ``is_closed`` / 404 flips it. A confirmed
+closure becomes ``status_basis='yelp_closed'`` in analyze.py's ``_closed()``.
+An unverified miss (budget ran out) is left untouched and retried next run.
+
 Capped by ``--limit`` calls; ``discover`` is skipped if the last run was within
 ``--max-age-days``. The raw sweep is cached to ``data/yelp_raw_last.json`` so a
 later rate-limited run rebuilds ``yelp_businesses`` instead of wiping it.
@@ -23,7 +32,7 @@ from math import asin, cos, radians, sin, sqrt
 from rapidfuzz import fuzz
 from sqlalchemy import text
 
-from boba.config import NYC_BBOX, YELP_API_KEY, YELP_SEARCH_URL, data_dir
+from boba.config import NYC_BBOX, YELP_API_KEY, YELP_BUSINESS_URL, YELP_SEARCH_URL, data_dir
 from boba.contracts import ContractViolation, ingest_run, last_successful_run, parse_yelp_business
 from boba.db import SessionLocal, engine, upsert
 from boba.filters import name_key, name_looks_like_boba
@@ -180,28 +189,90 @@ def discover(limit: int) -> int:
             }
         )
 
+    ids = {r["yelp_id"] for r in rows}
+
+    # Previously-known businesses absent from this sweep: verify each one
+    # individually rather than assume closed or blindly delete it. Skip the
+    # whole step on a thin/rate-limited sweep -- everything would look "missing".
+    if len(rows) > 200:
+        with SessionLocal() as s:
+            existing = {r[0] for r in s.execute(text("select yelp_id from yelp_businesses")).all()}
+        missing = sorted(existing - ids)
+    else:
+        missing = []
+
+    verify_rows, gone_ids, newly_closed, still_open, verify_calls = [], [], 0, 0, 0
+    for yid in missing:
+        if budget[0] <= 0:
+            break  # left untouched -- still "missing" next run, retried fresh then
+        r = sess.get(f"{YELP_BUSINESS_URL}/{yid}", timeout=30)
+        budget[0] -= 1
+        verify_calls += 1
+        if r.status_code == 429:
+            reset = r.headers.get("ratelimit-resettime", "?")
+            log.warning("Yelp rate limit -- stopping closure verification (resets %s)", reset)
+            break
+        if r.status_code == 404:
+            gone_ids.append(yid)  # Yelp dropped the listing entirely -- treat as closed
+            continue
+        r.raise_for_status()
+        try:
+            rec = parse_yelp_business(r.json())
+        except ContractViolation as exc:
+            log.warning("contract: %s", str(exc).splitlines()[0][:160])
+            continue
+        if rec.is_closed:
+            newly_closed += 1
+        else:
+            still_open += 1  # the sweep just missed it -- not a closure
+        verify_rows.append(
+            {
+                "yelp_id": rec.yelp_id,
+                "name": rec.name,
+                "is_closed": rec.is_closed,
+                "rating": rec.rating,
+                "review_count": rec.review_count,
+                "price": rec.price,
+                "phone": rec.phone,
+                "url": rec.url,
+                "categories": rec.categories,
+                "address": rec.address,
+                "city": rec.city,
+                "zip": rec.zip,
+                "geom": f"SRID=4326;POINT({rec.lon} {rec.lat})",
+                "checked_at": datetime.now(UTC),
+            }
+        )
+
     with SessionLocal() as s, ingest_run(s, "yelp_discover") as m:
         upsert(s, YelpBusiness, rows, index_elements=["yelp_id"])
-        swept = 0
-        ids = [r["yelp_id"] for r in rows]
-        if ids and len(ids) > 200:  # guard against a thin sweep on a rate-limited run
-            swept = s.execute(
-                text("delete from yelp_businesses where not (yelp_id = any(:ids))"),
-                {"ids": ids},
-            ).rowcount
+        upsert(s, YelpBusiness, verify_rows, index_elements=["yelp_id"])
+        if gone_ids:
+            s.execute(
+                text(
+                    "update yelp_businesses set is_closed = true, checked_at = now() "
+                    "where yelp_id = any(:ids)"
+                ),
+                {"ids": gone_ids},
+            )
         m.row_count = len(seen)
         m.kept_count = len(rows)
         m.detail = {
             "violations": violations,
             "off_topic": off_topic,
-            "swept": swept,
             "calls": limit - budget[0],
+            "missing_from_sweep": len(missing),
+            "verify_calls": verify_calls,
+            "newly_closed": newly_closed + len(gone_ids),
+            "gone_404": len(gone_ids),
+            "still_open_recheck": still_open,
         }
     log.info(
-        "discover: %d NYC boba businesses (%d off-topic dropped, %d contract)",
+        "discover: %d NYC boba businesses (%d off-topic, %d contract, %d newly closed)",
         len(rows),
         off_topic,
         violations,
+        newly_closed + len(gone_ids),
     )
     return len(rows)
 
