@@ -15,6 +15,7 @@ against a persistent Neon Postgres.
 - [docs/data-sources.md](docs/data-sources.md) — why two sources, why linking, the shop populations
 - [docs/methodology.md](docs/methodology.md) — identification, linking, borough assignment, dates — and the limits
 - [docs/decisions.md](docs/decisions.md) — non-obvious infrastructure choices
+- [docs/deployment.md](docs/deployment.md) — Neon, the weekly cron, the hosted dashboard, healthchecks
 
 ## How it works
 

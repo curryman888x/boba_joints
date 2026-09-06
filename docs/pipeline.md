@@ -66,5 +66,7 @@ Yelp stage no-ops without `YELP_API_KEY` (the set is then just the DOHMH
 boba-name tail).
 
 See [methodology.md](methodology.md) for identification / linking / date logic,
-[data-sources.md](data-sources.md) for why two sources, and
-[decisions.md](decisions.md) for infrastructure choices.
+[data-sources.md](data-sources.md) for why two sources,
+[decisions.md](decisions.md) for infrastructure choices, and
+[deployment.md](deployment.md) for the hosted setup (Neon, the weekly cron, the
+dashboard, healthchecks).

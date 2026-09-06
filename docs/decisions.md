@@ -2,6 +2,29 @@
 
 Short log of non-obvious choices. Newest first.
 
+## Hosted: Neon + a weekly GitHub Actions cron + Streamlit Cloud
+The census is only "current" if something re-runs the pipeline. A Docker Postgres
+can't persist between CI runs, so the DB moved to **Neon** (serverless, free
+tier). `.github/workflows/pipeline.yml` runs the full pipeline weekly
+(`0 6 * * 1` UTC) — a Yelp sweep is ~200 of the 500/day quota, so weekly is
+safe. The dashboard is on **Streamlit Community Cloud**, reading the same Neon
+DB. GitHub emails on a failed run but not a *missing* one, so a free
+**healthchecks.io** check (dead-man's-switch) covers cron misfires / Actions
+outages. `streamlit`/`plotly` had to move from `[dependency-groups]` to
+`[project.dependencies]` because Streamlit Cloud installs from `uv.lock`, which
+ignores groups. Full writeup: [deployment.md](deployment.md).
+
+## Closure detection: verify a missing shop, never infer from absence
+`discover` used to `delete from yelp_businesses` anything not in the latest
+sweep. But Yelp `/search` deprioritises closed listings *unevenly* and the
+depth-limited adaptive grid can just miss an open shop — so "absent" meant both
+"closed" and "we didn't look hard enough," and a real closure vanished instead of
+being recorded. Now: a previously-known id absent from the sweep gets an
+individual `/businesses/{id}` check (spending only leftover call budget). Only a
+confirmed `is_closed` / 404 flips it (→ `status_basis='yelp_closed'`); an
+unverified miss is left untouched and retried next run. Nothing is deleted for
+mere absence.
+
 ## Reframed: a current census, not an openings/closings timeline
 The original ask was "which NYC boba shops opened or closed, and when (2022–2026)".
 Free data can't support the *when*: no source has real opening dates (DOHMH first
